@@ -21,7 +21,7 @@ impl AlchemyWebSocket {
         Self { url }
     }
 
-    //metodo che serve per il 
+
     async fn connect_and_listen<F>(
     &self,
     callback: &mut F
@@ -145,55 +145,73 @@ impl AlchemyClient {
    
     // per ottienere il numero dell'ultimo blocco
     pub async fn get_latest_block_number(&self) -> Result<i64, Box<dyn Error + Send + Sync>> {
-       
-        let request = JRPCRequest {
-            jsonrpc: "2.0".to_string(),
-            method: "eth_blockNumber".to_string(),  
-            params: vec![],  
-            id: 1,
-        };
-        
-        //invio la richiesta HTTP POST
-        let response = self.http_client
-            .post(&self.url)
-            .json(&request)
-            .send()
-            .await?;
-        
-        let result: JRPCResponse<String> = response.json().await?;
-        //trasformo esadecimale
-        let block_number = crate::utils::hex_to_i64(&result.result)?;
-        Ok(block_number)
-    }
+   
+    let request = JRPCRequest {
+        jsonrpc: "2.0".to_string(),
+        method: "eth_blockNumber".to_string(),  
+        params: vec![],  
+        id: 1,
+    };
+    
+    //invio la richiesta HTTP POST
+    let response = self.http_client
+        .post(&self.url)
+        .json(&request)
+        .send()
+        .await?;
+    
+    let result: JRPCResponse<String> = response.json().await?;
+    
+    // Gestisci l'Option
+    let block_hex = result.result
+        .ok_or("No result in response")?;
+    
+    //trasformo esadecimale
+    let block_number = crate::utils::hex_to_i64(&block_hex)?;
+    Ok(block_number)
+}
     
     
-    //ottengo un blocco specifico
-    pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error  + Send + Sync>> {
-        //converto il numero del blocco in numero esadecimale
-        let block_hex = format!("0x{:x}", block_number);
-        
-        //prepraro la richiesta per ottnere QUEL blocco
-        let request = JRPCRequest {
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getBlockByNumber".to_string(),
-            params: vec![
-                json!(block_hex),  
-                json!(true)
-            ],
-            id: 1,
-        };
-        
-        //invio la richiesta
-        let response = self.http_client
-            .post(&self.url)
-            .json(&request)
-            .send()
-            .await?;
-        
-        //ottengo la rispsota
-        let result: JRPCResponse<Block> = response.json().await?;
-        Ok(result.result)
+   // mi restituisce quel blocco
+pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error + Send + Sync>> {
+    let block_hex = format!("0x{:x}", block_number);
+    
+    let request = JRPCRequest {
+        jsonrpc: "2.0".to_string(),
+        method: "eth_getBlockByNumber".to_string(),
+        params: vec![
+            json!(block_hex),  
+            json!(true)
+        ],
+        id: 1,
+    };
+    
+    //faccio la richiesta
+    let response = self.http_client
+        .post(&self.url)
+        .json(&request)
+        .send()
+        .await?;
+    
+    //ottengo la risposta
+    let response_text = response.text().await?;
+
+    //prendo la stringa e la converto nel formato json
+    let result: JRPCResponse<Block> = serde_json::from_str(&response_text)
+        .map_err(|e| {
+            eprintln!("Failed to parse response for block {}: {}", block_number, e);
+            eprintln!("Response body: {}", response_text);
+            e
+        })?;
+    
+
+    if let Some(error) = result.error {
+        return Err(format!("RPC error: {:?}", error).into());
     }
+    
+    //infine accedo al risultato vero e proprio ovvero il blocco
+    result.result.ok_or_else(|| "Block not found or null result".into())
+}
     
     
 }

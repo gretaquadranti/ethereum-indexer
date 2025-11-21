@@ -12,13 +12,15 @@ pub struct JRPCRequest {
 }
 
 //modulo per risposte da alchemy
+
 #[derive(Deserialize, Debug)]
 pub struct JRPCResponse<T> {  
     pub id: i32,
     pub jsonrpc: String,
-    pub result: T,  
+    pub result: Option<T>,  
+    #[serde(default)]
+    pub error: Option<Value>, 
 }
-
 
 //struttura per quando mi arriva come risposta un blocco
 #[derive(Debug, Deserialize)]
@@ -33,9 +35,14 @@ pub struct Block {
     pub gas_used: String,
     #[serde(rename = "gasLimit")]
     pub gas_limit: String,
+    #[serde(default)] 
     pub transactions: Vec<Value>, 
     pub size: String,
 }
+
+
+
+
 
 
 
