@@ -10,4 +10,14 @@ CREATE TABLE blocks (
     gas_limit BIGINT NOT NULL,
     transactions_count INTEGER NOT NULL,
     size BIGINT NOT NULL
+
 );
+
+
+
+Create table indexer_state(
+    id INTEGER PRIMARY KEY,                 
+    last_block_indexed BIGINT NOT NULL,      
+    last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP 
+);
+    
