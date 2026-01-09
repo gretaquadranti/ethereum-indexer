@@ -4,7 +4,7 @@ use std::collections::HashMap;
 //la chiave la rappresento con un vettore composto da 32 spazi, 
 //e in ogni spazio contiene un numero da 0 a 255, ovvero 1 byte 
 pub type Key = [u8; 32];     
-//questo è il valore intero da 32 byte che è contenuto nella leaf 
+//questo è il valore che è contenuto nella leaf 
 pub type Value = [u8; 32];  
 pub type Stem = [u8; 31];    //primi 31 byte della chiave, stesso suffisso
 pub type Suffix = u8;        //ultimo byte (0-255)
