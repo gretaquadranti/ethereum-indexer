@@ -4,7 +4,7 @@ use std::collections::HashMap;
 //la chiave la rappresento con un vettore composto da 32 spazi, 
 //e in ogni spazio contiene un numero da 0 a 255, ovvero 1 byte 
 pub type Key = [u8; 32];     
-//questo è il valore che è contenuto nella leaf 
+//questo è il valore intero da 32 byte che è contenuto nella leaf 
 pub type Value = [u8; 32];  
 pub type Stem = [u8; 31];    //primi 31 byte della chiave, stesso suffisso
 pub type Suffix = u8;        //ultimo byte (0-255)
@@ -209,130 +209,17 @@ impl VerkleTree {
             
             //è uno stemnode
             Some(NodeRef::Stem(stem_node)) => {
-                if stem_node.stem == *stem {
+               
                     //stesso stem → aggiorna/inserisci nel stemnode esistente
                     let old_value = stem_node.values[suffix as usize];
                     stem_node.values[suffix as usize] = Some(value);
                     old_value //restituisco il valore che è stato sovrascritto
-                } else {
-                    //quando c'è uno Stem diverso → dobbiamo fare lo "split"
-                    Self::split_node(node, index, stem, level, suffix, value)
-                }
-            }
-        }
-    }
-    
-   
-    fn split_node(
-        node: &mut BranchNode,
-        child_index: u8, //magari la differenza è piu avanti
-        new_stem: &Stem,
-        level: usize,
-        suffix: u8,
-        value: Value,
-    ) -> Option<Value> {
-        //indice per capire a quale livello divergono    
-        let mut divergence_level = level + 1;
-
-        //bottom up per tenere traccia dei vari branch node
-        let mut branch_chain = vec![];
-
-        //take è un metodo che permette di estrarre il valore, ovvero l'oggetto
-        //ora quel nodo non appartiene più all'albero, 
-        let old_stem_wrapper =  node.children[child_index as usize].take();
-
-        if let Some(NodeRef::Stem(old_node)) = old_stem_wrapper {
-        
-            let old_stem = old_node.stem;
-
-            //si va avanti fino a quando non si trova il punto in cui divergono
-            while divergence_level < 31 && old_stem[divergence_level] == new_stem[divergence_level] {
-          
-            //crea i branch node intermedi fino al punto di divergenza
-            let mut current_branch = BranchNode::new();
-
-            //byte che serve per capire chi è il padre
-            let index_for_parent = old_stem[divergence_level] as usize;
-
-            //aggiungo il nuovo nodo nel vettore
-            branch_chain.push((index_for_parent, current_branch)); 
-            divergence_level += 1;
-
-        }
-        
-        //raggiunto il punto di divergenza:
-        let mut final_bivio = BranchNode::new();
-
-        //prendo il byte di entrambi gli stem al livello in cui c'è la divergenza
-        let old_index = old_stem[divergence_level] as usize;
-        let new_index = new_stem[divergence_level] as usize;
-
-         
-         //PER NODO VECCHIO
-         if divergence_level == 30 {
-                final_bivio.children[old_index] = Some(NodeRef::Stem(old_node));
-                //tutto il resto è gia stato fatto, semplicemente ho spostato
-
-            } else {
-                //creo branch intermedi per il vecchio percorso
-                let old_path = Self::rebuild_path_for_stem(&old_stem, divergence_level, old_node);
-                final_bivio.children[old_index] = Some(old_path);
-            }
-
-            //PER NODO NUOVO
-        //se sono all'ultimo livello
-        if divergence_level == 30 {
                
-                let mut new_stem_node = StemNode::new(*new_stem);
-                new_stem_node.values[suffix as usize] = Some(value);
-                final_bivio.children[new_index] = Some(NodeRef::Stem(Box::new(new_stem_node)));
-            } else {
-                //creo sempre il nuovo nodo stem, ma devo anche ricostruire tutto il percorso
-                let mut new_stem_node = StemNode::new(*new_stem);
-                new_stem_node.values[suffix as usize] = Some(value);
-                let new_path = Self::rebuild_path_for_stem(new_stem, divergence_level, Box::new(new_stem_node));
-                final_bivio.children[new_index] = Some(new_path);
+            
             }
-
-        //riconnetto la catena 
-        let mut current_node_ref = NodeRef::Branch(Box::new(final_bivio));
-        
-        //percorro la catena di branch bottom up
-       for (idx, mut parent_branch) in branch_chain.into_iter().rev() {
-            parent_branch.children[idx] = Some(current_node_ref);
-            current_node_ref = NodeRef::Branch(Box::new(parent_branch));
         }
-        
-        // inserisco il primo branch nella posizione originale
-        node.children[child_index as usize] = Some(current_node_ref);
-    
     }
     
-    None 
-    }
-    
-    
-
-    fn rebuild_path_for_stem(
-        stem: &Stem,
-        start_level: usize,
-        stem_node: Box<StemNode>,
-    ) -> NodeRef {
-        
-        let mut current = NodeRef::Stem(stem_node);
-        
-        //faccio al contrario perchè senno avrei dei
-        //problemi tra padre-figlio
-        // da livello 30 fino a start_level + 1
-        for i in ((start_level + 1)..=30).rev() {
-            let mut branch = BranchNode::new();
-            let index = stem[i] as usize;
-            branch.children[index] = Some(current);
-            current = NodeRef::Branch(Box::new(branch));
-        }
-        
-        current
-    }
     
 
 }
@@ -367,15 +254,7 @@ fn main() {
     tree.insert(key2, value2);
     println!(" key2: {:?}\n", tree.get(&key2));
 
-    // inserimento con stem diverso, split
-    let mut key3 = [0u8; 32];
-    key3[30] = 2; // stem diverso
-    key3[31] = 7;
-    let value3 = [3u8; 32];
-
-    println!("inserisco con stem diverso");
-    tree.insert(key3, value3);
-    println!(" key3: {:?}\n", tree.get(&key3));
+    
 
     // update valore esistente, quindi stesso stem
     let value_updated = [99u8; 32];
@@ -392,6 +271,5 @@ fn main() {
     println!("ris: {:?}\n", tree.get(&key4));
 
 }
-
 
 
