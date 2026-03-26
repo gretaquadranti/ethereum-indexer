@@ -1,39 +1,22 @@
 use super::types::{Value, VectorCommitment};
 use super::interpolate::interpolate_lagrange;
-use crate::kzg::{G1Point, PublicKey, Scalar, kzg_commit, kzg_open, kzg_verify};
+use crate::kzg::{PublicKey, kzg_commit, kzg_open, kzg_verify};
+use ark_bls12_381::{Fr, G1Projective};
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
-use ark_ff::Field;
 use sha2::{Sha256, Digest};
+use ark_ec::CurveGroup;
 
 // CONVERSIONI--------------------------------------------------------------------------------------------------------
-
-// metodo per conversione da Value (48 bytes) a Scalar (32 byte)
-pub fn value_to_scalar(value: &Value) -> Scalar {
-    // uso sha per compressione dati
-    let mut hasher = Sha256::new();
-    hasher.update(value);  // input: 48 bytes
-    let hash = hasher.finalize();  // output: 32 bytes
-    
-    let mut bytes32 = [0u8; 32];
-    bytes32.copy_from_slice(&hash);
-    
-    // converte in scalar, quindi se il numero è piu grande del numero p,
-    //la funzione fa automaticmante mod
-    Scalar::from_le_bytes_mod_order(&bytes32)
-}
-
-
-// mmetodo x convertire un commitment in un value (48 bytes)
+// converto commitment in un value (48 bytes)
 pub fn commitment_to_value(commitment: VectorCommitment) -> Value {
-    // punto G1
-    let point = commitment.inner;
-    
+
     let mut bytes = Vec::new();
     
-    //converte (X,Y,Z) in due coordinate e alla fine prende la X
-    //scrive la X (0vvero i 48 byte) nell'heap
-    point.serialize_compressed(&mut bytes).expect("errore");
+    let point = commitment.inner;
+    let p_affine = point.into_affine();
+
+    p_affine.serialize_compressed(&mut bytes).expect("errore serializzazione");
     let mut result = [0u8; 48];
     
     //sposto i dai dall'heap allo stack
@@ -43,14 +26,26 @@ result
 }
 
 
-
+// compressione da 48 bytes (value) a 32 bytes (scalar) 
+pub fn value_to_scalar(value: &Value) -> Fr {
+    
+    let mut hasher256 = Sha256::new();
+    hasher256.update(value);  
+    let valore_hashato = hasher256.finalize();  
+    
+    let mut bytes32 = [0u8; 32];
+    bytes32.copy_from_slice(&valore_hashato);
+    
+    //il numero deve essere un elemento del campo finito r
+    Fr::from_le_bytes_mod_order(&bytes32)
+}
 //-------------------------------------------------------------------------------------------------------
 
 //CHIAMATE
 // metodo x commitment a un vettore di 256 valori
 pub fn commit_vector(values: &[Value; 256], pk: &PublicKey) -> VectorCommitment {
     
-    let mut scalars = [Scalar::ZERO; 256];
+    let mut scalars = [Fr::from(0u64); 256];
     for i in 0..256 {
         scalars[i] = value_to_scalar(&values[i]);
     }
@@ -69,9 +64,9 @@ pub fn prove_element(
     values: &[Value; 256],
     index: usize,
     pk: &PublicKey,
-) -> G1Point {
+) -> G1Projective {
     
-    let mut scalars = [Scalar::ZERO; 256];
+    let mut scalars = [Fr::from(0u64); 256];
     for i in 0..256 {
         scalars[i] = value_to_scalar(&values[i]);
     }
@@ -88,7 +83,7 @@ pub fn verify_element(
     commitment: VectorCommitment,
     index: usize,
     value: Value,
-    witness: G1Point,
+    witness: G1Projective,
     pk: &PublicKey,
 ) -> bool {
 

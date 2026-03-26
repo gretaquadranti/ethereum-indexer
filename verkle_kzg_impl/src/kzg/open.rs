@@ -1,15 +1,16 @@
-use super::types::{G1Point, PublicKey, Scalar};
+use super::setup::PublicKey;
 use super::commit::kzg_commit;
-use ark_ff::Field;
-
+use ark_bls12_381::{Fr, G1Projective};
+ 
 // calcolo witness
 pub fn kzg_open(
-    coefficients: &[Scalar],
+    coefficients: &[Fr],
     index: usize,
     pk: &PublicKey,
-) ->  G1Point {
+) ->  G1Projective {
 
-    let x0 = Scalar::from(index as u64);
+    //posizione
+    let x0 = Fr::from(index as u64);
     
     //y
     let f_in_x0 = evaluate_polynomial(coefficients, &x0);
@@ -24,9 +25,10 @@ pub fn kzg_open(
 
 
 // per calcolare il polinomio in x0/suffix
-fn evaluate_polynomial(coefficients: &[Scalar], x: &Scalar) -> Scalar {
+fn evaluate_polynomial(coefficients: &[Fr], x: &Fr) -> Fr {
+    
     if coefficients.is_empty() {
-        return Scalar::ZERO;
+        return Fr::from(0u64);
     }
     
     let mut result = coefficients[coefficients.len() - 1];
@@ -37,26 +39,28 @@ fn evaluate_polynomial(coefficients: &[Scalar], x: &Scalar) -> Scalar {
     result
 }
 
-//metodo per calcolare il quoziente usando ruffini :(
+// calcolare il quoziente usando ruffini 
 fn compute_quotient(
-    coefficients: &[Scalar],
-    x0: &Scalar,
-    f_in_x0: &Scalar,
-) -> Vec<Scalar> {
+    coefficients: &[Fr],
+    x0: &Fr,
+    f_in_x0: &Fr,
+) -> Vec<Fr> {
     
     if coefficients.len() == 0 {
         return vec![];
     }
     
     //vettore dove metto i coef del quoziente, il grado è sempre -1 rispetto al polinomio originale
-    let mut quoziente = vec![Scalar::ZERO; coefficients.len() - 1];
+    let mut quoziente = vec![Fr::from(0u64); coefficients.len() - 1];
     
-    //costruisco il numeratore:  p(x) = f(x) - f(x0)
+    //costruisco il numeratore:  p(x) = f(x) - f(x0)/y
     let mut p = coefficients.to_vec();
     p[0] = coefficients[0] - f_in_x0;  
     
     let n = quoziente.len();
-    //calcolo il quoziente usando ruffini
+
+
+    //calcolo il quoziente usando Horner
     quoziente[n - 1] = p[ p.len()-1];
     
     for i in (0.. p.len() - 2).rev() {

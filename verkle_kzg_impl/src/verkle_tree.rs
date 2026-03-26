@@ -1,6 +1,6 @@
 use crate::kzg::PublicKey;
 use crate::vector_commitment::{VectorCommitment,  commit_vector, prove_element, verify_element,  commitment_to_value};
-use crate::kzg::{G1Point};
+use ark_bls12_381::G1Projective;
 //la chiave è un vettore da 32 byte
 pub type Key = [u8; 32];     
 pub type Value = [u8; 48];  
@@ -129,11 +129,6 @@ impl VerkleTree {
         }
     }
     
-    //getter
-    pub fn getter_root(&self) -> &BranchNode {
-        &self.root
-    }
-
    //recupera il valore associato a una chiave che la passo in input, se non esiste ritorna none
     pub fn get(&self, key: &Key) -> Option<Value> {
       
@@ -321,5 +316,5 @@ pub struct MembershipProof {
     pub commitment: VectorCommitment,  // commitment del StemNode
     pub index: usize,                  // rappresenta x0
     pub value: Value,                  // y
-    pub witness: G1Point,           // witness KZG 
+    pub witness: G1Projective,           // witness KZG 
 }

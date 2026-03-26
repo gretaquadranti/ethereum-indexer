@@ -1,11 +1,10 @@
-use crate::kzg::Scalar;
+use ark_bls12_381::Fr;
 use ark_ff::Field;
-
 //lagrange: serve per ottenere un polinomio che passa dai punti all'interno del vettore di valori 'children'
-pub fn interpolate_lagrange(values: &[Scalar; 256]) -> Vec<Scalar> {
+pub fn interpolate_lagrange(values: &[Fr; 256]) -> Vec<Fr> {
     
     let n = values.len();
-    let mut coefficients = vec![Scalar::ZERO; n];
+    let mut coefficients = vec![Fr::from(0u64); n];
     
     for i in 0..n {
         let lagrange_poly = compute_lagrange_basis(i, n);
@@ -21,13 +20,13 @@ pub fn interpolate_lagrange(values: &[Scalar; 256]) -> Vec<Scalar> {
 
 
 // crea il polinomio base L_i(x)
-fn compute_lagrange_basis(i: usize, n: usize) -> Vec<Scalar> {
+fn compute_lagrange_basis(i: usize, n: usize) -> Vec<Fr> {
 
-    let mut poly = vec![Scalar::ONE]; // INIZIA DA "1"
+    let mut poly = vec![Fr::from(1u64)]; // INIZIA DA "1"
 
     for j in 0..n {
         if j != i {
-            let a = Scalar::from(j as u64);
+            let a = Fr::from(j as u64);
             // poly = poly * (x - j)
             poly = multiply_poly_by_linear(&poly, a); //poly viene aggiornato
             // primo ciclo 1 * (x - 1)
@@ -36,11 +35,11 @@ fn compute_lagrange_basis(i: usize, n: usize) -> Vec<Scalar> {
     }
     
     //faccio (i-j), qundi scorro j
-   	let mut denominator = Scalar::ONE;
+   	let mut denominator = Fr::from(1u64);
     for j in 0..n {
             if j != i {
-            let i_scalar = Scalar::from(i as u64);
-            let j_scalar = Scalar::from(j as u64);
+            let i_scalar = Fr::from(i as u64);
+            let j_scalar = Fr::from(j as u64);
                 denominator *= i_scalar - j_scalar; //viene aggiornato 
         }
     }
@@ -58,9 +57,9 @@ fn compute_lagrange_basis(i: usize, n: usize) -> Vec<Scalar> {
 // poly = [1]       -->  (1)
 // poly = [-1, 1]   -->  (1x - 1)
 // a è l'indice
-fn multiply_poly_by_linear(poly: &[Scalar], a: Scalar) -> Vec<Scalar> {
+fn multiply_poly_by_linear(poly: &[Fr], a: Fr) -> Vec<Fr> {
     let n = poly.len();
-    let mut result = vec![Scalar::ZERO; n + 1]; 
+    let mut result = vec![Fr::from(0u64); n + 1]; 
     
     //  moltiplico per x
     for i in 0..n {
