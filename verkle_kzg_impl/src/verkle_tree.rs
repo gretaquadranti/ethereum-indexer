@@ -128,6 +128,17 @@ impl VerkleTree {
             pk,
         }
     }
+
+    //recupero il commitment del tree
+    pub fn get_root_commitment(&self) -> Option<VectorCommitment> {
+    self.root.commitment
+}
+
+
+
+    pub fn getter_pk(&self) -> &PublicKey {
+            &self.pk
+    }
     
    //recupera il valore associato a una chiave che la passo in input, se non esiste ritorna none
     pub fn get(&self, key: &Key) -> Option<Value> {
@@ -249,72 +260,172 @@ impl VerkleTree {
         node.compute_commitment(pk);
     }
     
+
+
+
    
     // metodo chiamato x calcolare la prova e "inviare" <x,y,w> 
     pub fn prove(&self, key: &Key) -> Option<MembershipProof> {
         let stem = get_stem(key);
         let suffix = get_suffix(key);
 
+        // raccoglie i nodi visitati durante la discesa + posizione
+        let mut visited_nodes: Vec<(&BranchNode, usize)> = Vec::new();
         let mut current_node = &self.root;
+
 
         //scorro l'array dello stem
         for &byte in stem.iter() {
+            //indica il numero del prossimo figlio da visitare
             let child_index = byte as usize;
-            
+
             match &current_node.children[child_index] {
                 None => return None, //se la chiave non esiste
 
+
                 Some(NodeRef::Branch(branch)) => {
+                    // salvo il nodo e l'indice che ho seguito
+                    visited_nodes.push((current_node, child_index));
                     current_node = branch;
                 }
-                
+
+
                 Some(NodeRef::Stem(stem_node)) => {
-                    
-                    //uso il suffisso per poter accedere a value in posizione values[suffix]
                     let value = stem_node.values[suffix as usize]?;
-                   
-                    let commitment = stem_node.commitment?;
+                    let commitment_stem = stem_node.commitment?;
                     
+                    //a che serve?
                     let mut values_array = [[0u8; 48]; 256];
+
                     for i in 0..256 {
                         if let Some(v) = stem_node.values[i] {
                         values_array[i] = v;
                         }
                     }
-                  
-                    let witness = prove_element(&values_array, suffix as usize, &self.pk);
-                    
-                    return Some(MembershipProof {
-                        commitment,
-                        index: suffix as usize,
-                        value,
-                        witness, 
-                    });
-                }
-            }
-        }
-        None
-    }
+
+                    //ottengo la prova
+                    let witness_stem = prove_element(&values_array, suffix as usize, &self.pk);
+
+                    let step_stem = ProofStep {
+                    commitment: commitment_stem,
+                    index: suffix as usize,
+                    value,
+                    witness: witness_stem,
+                    };
+
+                    //ma in qaule posizione lo inserisco????
+                    let mut steps: Vec<ProofStep> = vec![step_stem];
+
+                    // Aggiungiamo il suo ProofStep qui, poi risaliamo con visited_nodes.
+                    let parent_commitment = current_node.commitment?;
+                    let mut children_values_parent = [[0u8; 48]; 256];
+
+                    //perchè ricalcola per ogni nodo il commitment?    
+                    for i in 0..256 {
+                            match &current_node.children[i] {
+                                None => {}
+                                Some(NodeRef::Stem(s)) => {
+                                    if let Some(c) = s.commitment {
+                                        children_values_parent[i] = commitment_to_value(c);
+                                    }
+                                }
+                                Some(NodeRef::Branch(b)) => {
+                                    if let Some(c) = b.commitment {
+                                        children_values_parent[i] = commitment_to_value(c);
+                                    }
+                                }
+                            }
+                        }
+                        //calcola la prova del padre 
+                        let witness_parent = prove_element(&children_values_parent, child_index, &self.pk);
+                        
+                        steps.push(ProofStep {
+                            commitment: parent_commitment,
+                            index: child_index,
+                            value: commitment_to_value(commitment_stem),
+                            witness: witness_parent,
+                        });
+
+                        //da qua in poi ciaone
+
+                        let mut child_commitment_as_value = commitment_to_value(parent_commitment);
+                        let mut child_index_for_parent = child_index; // verrà subito sostituito
+
+                        for (branch_node, idx) in visited_nodes.iter().rev() {
+                            let branch_commitment = branch_node.commitment?;
+
+                            let mut children_values = [[0u8; 48]; 256];
+                            for i in 0..256 {
+                                match &branch_node.children[i] {
+                                    None => {}
+                                    Some(NodeRef::Stem(s)) => {
+                                        if let Some(c) = s.commitment {
+                                            children_values[i] = commitment_to_value(c);
+                                        }
+                                    }
+                                    Some(NodeRef::Branch(b)) => {
+                                        if let Some(c) = b.commitment {
+                                            children_values[i] = commitment_to_value(c);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // idx è la posizione del figlio (già noto) in questo branch_node
+                            let witness = prove_element(&children_values, *idx, &self.pk);
+                            steps.push(ProofStep {
+                                commitment: branch_commitment,
+                                index: *idx,
+                                value: child_commitment_as_value,
+                                witness,
+                            });
+
+                            child_commitment_as_value = commitment_to_value(branch_commitment);
+                            child_index_for_parent = *idx;
+                        }
+
+                        return Some(MembershipProof { steps, value });
+                                } 
+                            }
+                        }
+                        None
+                    }
+
 
     // verifica della prova
-    pub fn verify_proof(proof: &MembershipProof, pk: &PublicKey) -> bool {
-        verify_element(
-            proof.commitment,
-            proof.index,
-            proof.value,
-            proof.witness.clone(),
+   pub fn verify_proof(proof: &MembershipProof, pk: &PublicKey) -> bool {
+    for (i, step) in proof.steps.iter().enumerate() {
+        let valid = verify_element(
+            step.commitment,
+            step.index,
+            step.value,
+            step.witness.clone(),
             pk,
-        )
+        );
+        println!("step {}: {}", i, valid); // debug
+        if !valid {
+            return false;
+        }
     }
+    true
+}
 }
 
 
 
-// struttura per la prova di membership
+
+// un singolo step della catena
+#[derive(Debug, Clone)]
+pub struct ProofStep {
+    pub commitment: VectorCommitment,  // commitment del nodo a questo livello
+    pub index: usize,                  // quale figlio/valore
+    pub value: Value,                  // il valore che si sta provando a questo livello
+    pub witness: G1Projective,         // proof KZG
+}
+
+// la proof completa
 #[derive(Debug, Clone)]
 pub struct MembershipProof {
-    pub commitment: VectorCommitment,  // commitment del StemNode
-    pub index: usize,                  // rappresenta x0
-    pub value: Value,                  // y
-    pub witness: G1Projective,           // witness KZG 
+    pub steps: Vec<ProofStep>,  // dal StemNode fino alla radice
+    pub value: Value,           // il value finale (l'hash del blocco)
 }

@@ -67,3 +67,22 @@ pub async fn save_block(
 }
 
 
+
+
+pub async fn get_all_blocks(pool: &PgPool)-> Result<Vec<(i64, String)>, Box<dyn Error + Send + Sync>> {
+    
+    let rows = sqlx::query("SELECT number, hash FROM blocks ORDER BY number ASC")
+        .fetch_all(pool)
+        .await?;
+ 
+    let blocks = rows
+        .iter()
+        .map(|row| {
+            let number: i64 = row.get(0);
+            let hash: String = row.get(1);
+            (number, hash)
+        })
+        .collect();
+ 
+    Ok(blocks)
+}
