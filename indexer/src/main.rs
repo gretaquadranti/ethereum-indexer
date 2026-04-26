@@ -56,12 +56,16 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tree.insert(key, value);
     }
 
+
+
 //------------------------------------TEST-----------------------------------------
     
     println!("blocchi disponibili: da {} a {}", 
     blocks.first().unwrap().0, 
     blocks.last().unwrap().0
 );
+
+let root = tree.get_root_commitment().unwrap();
 
 
 print!("inserisci il numero del blocco: ");
@@ -87,7 +91,7 @@ while input != "end" {
         match proof {
             Some(p) => {
                 //chiamo la verifica della prova
-                let verifica = VerkleTree::verify_proof(&p, tree.getter_pk());
+                let verifica = VerkleTree::verify_proof(&p, tree.getter_pk(),root);
                 println!("blocco: {}", blocco_input);
                 //p value è da 48 byte e deve essere trasformato in esadecimale
                 println!("hash: 0x{}", hex::encode(&p.value[0..32]));
@@ -99,7 +103,7 @@ while input != "end" {
                 let mut prova_manomessa = p.clone();
                 prova_manomessa.steps[0].value = [0u8; 48];
                 
-                let falsa = VerkleTree::verify_proof(&prova_manomessa, tree.getter_pk());
+                let falsa = VerkleTree::verify_proof(&prova_manomessa, tree.getter_pk(),root);
                 println!("prova manomessa: {}", falsa);
                 }
             None => {
