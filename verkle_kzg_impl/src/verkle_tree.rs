@@ -235,7 +235,7 @@ impl VerkleTree {
     
     fn update_commitments_recursive(node: &mut BranchNode, stem: &Stem, level: usize,  pk: &PublicKey,) {
 
-         if level >= 31 { //check
+        if level >= 31 { //check
         return;  
     }
         let index = stem[level];
@@ -270,40 +270,43 @@ impl VerkleTree {
         let suffix = get_suffix(key);
 
         // raccoglie i nodi visitati durante la discesa + posizione
-        let mut visited_nodes: Vec<(&BranchNode, usize)> = Vec::new();
+        let mut ls_nodi_visitati: Vec<(&BranchNode, usize)> = Vec::new();
         let mut current_node = &self.root;
 
 
         //scorro l'array dello stem
-        for &byte in stem.iter() {
+        for &indice in stem.iter() {
             //indica il numero del prossimo figlio da visitare
-            let child_index = byte as usize;
+            let child_indice = indice as usize;
 
-            match &current_node.children[child_index] {
-                None => return None, //se la chiave non esiste
+            //se il figlio nella posizione 'indice' di current node è vuoto:
+            match &current_node.children[child_indice] {
+                None => {
+                println!("non esiste il percorso");
+                return None;}
 
-
+                //se il figlio del current node nella posizione 'indice' è di tipo branch:
                 Some(NodeRef::Branch(branch)) => {
-                    // salvo il nodo e l'indice che ho seguito
-                    visited_nodes.push((current_node, child_index));
+                    // salvo current node e l'indice 
+                    ls_nodi_visitati.push((current_node, child_indice));
                     current_node = branch;
                 }
 
-
+                //se il figlio è uno stem node
                 Some(NodeRef::Stem(stem_node)) => {
                     let value = stem_node.values[suffix as usize]?;
                     let commitment_stem = stem_node.commitment?;
                     
-                    //a che serve?
                     let mut values_array = [[0u8; 48]; 256];
 
+                    //recupero tutti i valori dello stem
                     for i in 0..256 {
                         if let Some(v) = stem_node.values[i] {
                         values_array[i] = v;
                         }
                     }
 
-                    //ottengo la prova
+                    //chiamo per la prova. in input: array dei valori e suffisso e pk
                     let witness_stem = prove_element(&values_array, suffix as usize, &self.pk);
 
                     let step_stem = ProofStep {
@@ -313,14 +316,17 @@ impl VerkleTree {
                     witness: witness_stem,
                     };
 
-                    //ma in qaule posizione lo inserisco????
-                    let mut steps: Vec<ProofStep> = vec![step_stem];
+                    //salvo le prove
+                    let mut steps: Vec<ProofStep> = Vec::new();
+                    steps.push(step_stem);
+                   //-----------------------------------------
 
-                    // Aggiungiamo il suo ProofStep qui, poi risaliamo con visited_nodes.
+                    //recupero il commitment dello stemnode
                     let parent_commitment = current_node.commitment?;
+
                     let mut children_values_parent = [[0u8; 48]; 256];
 
-                    //perchè ricalcola per ogni nodo il commitment?    
+                    //recupera i vari commitment, trasformandoli in value e li salvo nell'array  
                     for i in 0..256 {
                             match &current_node.children[i] {
                                 None => {}
@@ -337,23 +343,25 @@ impl VerkleTree {
                             }
                         }
                         //calcola la prova del padre 
-                        let witness_parent = prove_element(&children_values_parent, child_index, &self.pk);
+                        let witness_parent = prove_element(&children_values_parent, child_indice, &self.pk);
                         
                         steps.push(ProofStep {
                             commitment: parent_commitment,
-                            index: child_index,
+                            index: child_indice,
                             value: commitment_to_value(commitment_stem),
                             witness: witness_parent,
                         });
 
-                        //da qua in poi ciaone
-
+                        
+                        //salvo momentaneamente il commitment (trasformato in value) del current node
                         let mut child_commitment_as_value = commitment_to_value(parent_commitment);
-                        let mut child_index_for_parent = child_index; // verrà subito sostituito
 
-                        for (branch_node, idx) in visited_nodes.iter().rev() {
+                        //scorro la lista dei nodi visitati al contrario
+                        for (branch_node, idx) in ls_nodi_visitati.iter().rev() {
+                            //recupero il commitment
                             let branch_commitment = branch_node.commitment?;
 
+                            //recupero ciascun commit e lo trasformo in value
                             let mut children_values = [[0u8; 48]; 256];
                             for i in 0..256 {
                                 match &branch_node.children[i] {
@@ -371,8 +379,10 @@ impl VerkleTree {
                                 }
                             }
 
-                            // idx è la posizione del figlio (già noto) in questo branch_node
+                            // idx è la posizione del figlio (già noto) in questo branch_node, calcolo la prova
                             let witness = prove_element(&children_values, *idx, &self.pk);
+                            
+                            
                             steps.push(ProofStep {
                                 commitment: branch_commitment,
                                 index: *idx,
@@ -381,7 +391,6 @@ impl VerkleTree {
                             });
 
                             child_commitment_as_value = commitment_to_value(branch_commitment);
-                            child_index_for_parent = *idx;
                         }
 
                         return Some(MembershipProof { steps, value });
@@ -393,7 +402,7 @@ impl VerkleTree {
 
 
     // verifica della prova
-   pub fn verify_proof(proof: &MembershipProof, pk: &PublicKey) -> bool {
+   pub fn verify_proof(proof: &MembershipProof, pk: &PublicKey, root: VectorCommitment) -> bool {
     for (i, step) in proof.steps.iter().enumerate() {
         let valid = verify_element(
             step.commitment,
@@ -402,12 +411,18 @@ impl VerkleTree {
             step.witness.clone(),
             pk,
         );
-        println!("step {}: {}", i, valid); // debug
+
         if !valid {
             return false;
         }
     }
-    true
+
+    // controllo anche che l'ultimo step deve avere il commitment uguale alla radice
+    if let Some(last_step) = proof.steps.last() {
+        return last_step.commitment.inner == root.inner;
+    }
+   
+   false
 }
 }
 
