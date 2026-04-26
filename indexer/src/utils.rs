@@ -18,8 +18,7 @@ pub fn block_number_to_key(block_number: i64) -> [u8; 32] {
     //Per esempio il numero `10618001` diventa: `[0, 0, 0, 0, 0, 161, 249, 193]`
     let bytes = block_number.to_be_bytes(); 
 
-    // copia quei 8 byte nei primi 8 posti dell'array PERCHè NEI PRIMI POSTI E NON 
-    //AGLI ULTIMI POSTI???
+    // copia quei 8 byte nei primi 8 posti dell'array 
     key[0..8].copy_from_slice(&bytes);
     
     key
