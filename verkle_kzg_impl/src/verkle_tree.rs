@@ -402,8 +402,9 @@ impl VerkleTree {
 
 
     // verifica della prova
+    //è un metodo statico
    pub fn verify_proof(proof: &MembershipProof, pk: &PublicKey, root: VectorCommitment) -> bool {
-    for (i, step) in proof.steps.iter().enumerate() {
+    for (step) in proof.steps.iter() {
         let valid = verify_element(
             step.commitment,
             step.index,

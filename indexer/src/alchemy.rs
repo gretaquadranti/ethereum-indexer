@@ -143,39 +143,43 @@ impl AlchemyClient {
     }
     
    
-    // per ottienere il numero dell'ultimo blocco
+    // per ottenere il numero dell'ultimo blocco
+    //è una funzione client RPC
     pub async fn get_latest_block_number(&self) -> Result<i64, Box<dyn Error + Send + Sync>> {
    
+   //preparo la richiesta
     let request = JRPCRequest {
         jsonrpc: "2.0".to_string(),
-        method: "eth_blockNumber".to_string(),  
-        params: vec![],  
+        method: "eth_blockNumber".to_string(),  //metodo per chiedere l'ultimo blocco
+        params: vec![],  //non servono parametri extra per questo metodo
         id: 1,
     };
     
     //invio la richiesta HTTP POST
     let response = self.http_client
         .post(&self.url)
-        .json(&request)
-        .send()
+        .json(&request) //inserisce il pacchetto json creato sopra
+        .send() //spedisce la richiesta
         .await?;
     
     let result: JRPCResponse<String> = response.json().await?;
     
-    // Gestisci l'Option
+   
     let block_hex = result.result
         .ok_or("No result in response")?;
     
-    //trasformo esadecimale
+    //trasformo da esadecimale a decimale
     let block_number = crate::utils::hex_to_i64(&block_hex)?;
     Ok(block_number)
 }
     
     
-   // mi restituisce quel blocco
+   //  restituisce quel blocco richiesto
 pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error + Send + Sync>> {
+    //trasformo il blocco da decimale a hex
     let block_hex = format!("0x{:x}", block_number);
     
+    //costruisco la richiesta
     let request = JRPCRequest {
         jsonrpc: "2.0".to_string(),
         method: "eth_getBlockByNumber".to_string(),
@@ -186,7 +190,7 @@ pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error 
         id: 1,
     };
     
-    //faccio la richiesta
+    //invio la richiesta
     let response = self.http_client
         .post(&self.url)
         .json(&request)
@@ -214,4 +218,6 @@ pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error 
 }
     
     
+
+
 }

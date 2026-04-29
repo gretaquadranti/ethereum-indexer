@@ -12,7 +12,6 @@ pub struct JRPCRequest {
 }
 
 //modulo per risposte da alchemy
-
 #[derive(Deserialize, Debug)]
 pub struct JRPCResponse<T> {  
     pub id: i32,

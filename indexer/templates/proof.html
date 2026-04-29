@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Verkle Proof</title>
+  </head>
+  <body>
+    <h1>Blocco {{ block_number }}</h1>
+    <p>Hash: {{ block_hash }}</p>
+    <p>Prova valida: {% if proof_valid %}✓{% else %}✗{% endif %}</p>
+    <p>Root: {{ root_attuale }}</p>
+    <p>commitment_nella_prova: {{commitment_nella_prova}}</p>
+  </body>
+</html>

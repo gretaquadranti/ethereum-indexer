@@ -1,0 +1,2 @@
+fn(axum::extract::Path<i64>, axum::extract::State<AppState>) -> impl futures_util::Future<Output = {type error}> {get_proof_html}
+fn(axum::extract::Path<i64>, axum::extract::State<AppState>) -> impl futures_util::Future<Output = {type error}> {get_proof_html}: Handler<_, _>
