@@ -5,16 +5,17 @@ use std::error::Error;
 use std::pin::Pin;
 use std::future::Future;
 use reqwest::Client;
-use crate::models::{JRPCRequest, JRPCResponse, Block};
+use crate::models::{JsonRPCRequest, JsonRPCResponse, Block};
 
 
+// webSocket: mantiene una connessione persistente con Alchemy e riceve
+// una notifica ogni volta che viene minato un nuovo blocco sulla blockchain
 pub struct AlchemyWebSocket {
     url: String,
 }
 
-
 impl AlchemyWebSocket {
-    //costruttore
+
     pub fn new(api_key: String) -> Self {
         // uso wss x aprire un canale di comunicazione PERMANENTE 
         let url = format!("wss://eth-sepolia.g.alchemy.com/v2/{}", api_key);
@@ -22,21 +23,22 @@ impl AlchemyWebSocket {
     }
 
 
+    // apre la connessione WebSocket, si iscrive al feed dei nuovi blocchi ed entra
+    // nel loop di ascolto
     async fn connect_and_listen<F>(
     &self,
     callback: &mut F
 ) -> Result<(), Box<dyn Error + Send + Sync>>
 where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'static
 {
-    //apro una connessione webSocket con alchemy 
+    
     let (ws_stream, _) = connect_async(&self.url).await?; 
     println!("connected to webSocket");
     
-    //suddivisione dei canali di scrittura e lettura 
     let (mut write, mut read) = ws_stream.split();
 
     //richiesta di iscrivermi al feed che annuncia quando ci sono nuovi blocchi
-    let iscrizione = crate::models::JRPCRequest {
+    let iscrizione = crate::models::JsonRPCRequest {
         jsonrpc: "2.0".to_string(),
         id: 1,
         method: "eth_subscribe".to_string(),
@@ -46,6 +48,8 @@ where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'sta
     let iscrizione_str = serde_json::to_string(&iscrizione)?;
     write.send(Message::Text(iscrizione_str)).await?;
     
+    //loop in ascolto.
+    //read.next().await si sospende e aspetta il prossimo messaggio da Alchemy
     while let Some(mesg) = read.next().await {
         if mesg.is_err() {
             println!("network error: {:?}", mesg.err());
@@ -53,12 +57,9 @@ where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'sta
         }
 
         let messaggio = mesg.unwrap();
-
-        // se messaggio è di tipo testo
         if messaggio.is_text() {
             let testo = messaggio.to_string();
             
-            //converto la stringa in json
             let json_testo = serde_json::from_str::<serde_json::Value>(&testo);
             
             if json_testo.is_err() {
@@ -71,11 +72,9 @@ where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'sta
             if params.is_some() {
                 
                 let result = params.unwrap().get("result");
-                
                 if result.is_some() {
                     let number = result.unwrap().get("number");
                     if number.is_some() {
-                        //ottengo il numero del blocco
                         let numero_hex = number.unwrap().as_str().unwrap();
                         callback(numero_hex.to_string()).await; //chiamo la callback
                     }
@@ -83,11 +82,15 @@ where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'sta
             }
         }
 
+        // alchemy invia periodicamente un ping per verificare che la connessione
+        // sia ancora attiva -> invio pong 
         else if messaggio.is_ping() {
             let dati = messaggio.into_data();
             write.send(Message::Pong(dati)).await?;
         }
 
+        //ilserver ha chiuso la connessione in modo pulito, esce dal loop
+        // e lascio che subscribe_new_blocks gestisca la riconnessione
         else if messaggio.is_close() {
             println!("server ha chiuso la connessione");
             break;
@@ -99,7 +102,9 @@ where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'sta
 }
 
 
-    //funzione che serve ad INIZIARE per poi mettersi in ascolto
+    //punto di ingresso pubblico per avviare l'ascolto dei nuovi blocchi -> chiama
+    // connect_and_listen in un loop infinito- se la connessione cade,
+    // il sistema si riconnetta automaticamente senza dover riavviare il programma
     pub async fn subscribe_new_blocks<F>(
         &self, 
         mut callback: F 
@@ -129,6 +134,7 @@ where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'sta
 
 //----------------------------------------------------------------------------------------------------------------
 // per fare richieste "una tantum" --> serve per recuperare il passato
+//durante il catch-up iniziale o quando la callback deve scaricare un blocco appena notificato dal WebSocket
 pub struct AlchemyClient {
     http_client: Client,
     url: String,
@@ -136,6 +142,7 @@ pub struct AlchemyClient {
 
 impl AlchemyClient {
     pub fn new(api_key: String) -> Self {
+        //richiesta HTTP apre una connessione, riceve la risposta e la chiude
         let http_client = Client::new();
         let url = format!("https://eth-sepolia.g.alchemy.com/v2/{}", api_key);
         
@@ -143,65 +150,59 @@ impl AlchemyClient {
     }
     
    
-    // per ottenere il numero dell'ultimo blocco
-    //è una funzione client RPC
+    //chiede ad alchemy il numero dell'ultimo blocco minato sulla blockchain
+    // metodo usato all'avvio per calcolare il gap tra l'ultimo blocco nel database
+    // e il blocco piu recente della chain
     pub async fn get_latest_block_number(&self) -> Result<i64, Box<dyn Error + Send + Sync>> {
    
    //preparo la richiesta
-    let request = JRPCRequest {
+    let request = JsonRPCRequest {
         jsonrpc: "2.0".to_string(),
-        method: "eth_blockNumber".to_string(),  //metodo per chiedere l'ultimo blocco
-        params: vec![],  //non servono parametri extra per questo metodo
+        method: "eth_blockNumber".to_string(), 
+        params: vec![],  
         id: 1,
     };
     
-    //invio la richiesta HTTP POST
     let response = self.http_client
         .post(&self.url)
-        .json(&request) //inserisce il pacchetto json creato sopra
-        .send() //spedisce la richiesta
+        .json(&request) 
+        .send() 
         .await?;
     
-    let result: JRPCResponse<String> = response.json().await?;
+    let result: JsonRPCResponse<String> = response.json().await?;
     
-   
     let block_hex = result.result
         .ok_or("No result in response")?;
     
-    //trasformo da esadecimale a decimale
     let block_number = crate::utils::hex_to_i64(&block_hex)?;
     Ok(block_number)
 }
     
     
-   //  restituisce quel blocco richiesto
+   //scarica il blocco completo dato il suo numero
 pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error + Send + Sync>> {
-    //trasformo il blocco da decimale a hex
     let block_hex = format!("0x{:x}", block_number);
     
-    //costruisco la richiesta
-    let request = JRPCRequest {
+   
+    let request = JsonRPCRequest {
         jsonrpc: "2.0".to_string(),
         method: "eth_getBlockByNumber".to_string(),
         params: vec![
             json!(block_hex),  
-            json!(true)
+            json!(true) //per ora false -> non uso informazioni sulle transazioni
         ],
         id: 1,
     };
     
-    //invio la richiesta
     let response = self.http_client
         .post(&self.url)
         .json(&request)
         .send()
         .await?;
     
-    //ottengo la risposta
     let response_text = response.text().await?;
 
-    //prendo la stringa e la converto nel formato json
-    let result: JRPCResponse<Block> = serde_json::from_str(&response_text)
+    let result: JsonRPCResponse<Block> = serde_json::from_str(&response_text)
         .map_err(|e| {
             eprintln!("Failed to parse response for block {}: {}", block_number, e);
             eprintln!("Response body: {}", response_text);
@@ -212,8 +213,7 @@ pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error 
     if let Some(error) = result.error {
         return Err(format!("RPC error: {:?}", error).into());
     }
-    
-    //infine accedo al risultato vero e proprio ovvero il blocco
+
     result.result.ok_or_else(|| "Block not found or null result".into())
 }
     

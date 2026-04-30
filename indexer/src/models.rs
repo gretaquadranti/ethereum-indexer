@@ -1,10 +1,9 @@
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 
-
 //modulo per richieste a alchemy
 #[derive(Serialize)]
-pub struct JRPCRequest {
+pub struct JsonRPCRequest {
     pub jsonrpc: String,
     pub method: String,
     pub params: Vec<Value>,
@@ -13,7 +12,7 @@ pub struct JRPCRequest {
 
 //modulo per risposte da alchemy
 #[derive(Deserialize, Debug)]
-pub struct JRPCResponse<T> {  
+pub struct JsonRPCResponse<T> {  
     pub id: i32,
     pub jsonrpc: String,
     pub result: Option<T>,  

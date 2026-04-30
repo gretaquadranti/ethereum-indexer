@@ -3,7 +3,9 @@ use crate::models::Block;
 use crate::utils::hex_to_i64;
 use std::error::Error;
 
-//metodo per ottenere l'ultimo blocco 
+// legge dal database l'ultimo numero di blocco che è stato indicizzato
+// viene usato all'avvio per sapere da dove riprendere il catch-up, e dalla
+// callback WebSocket per rilevare eventuali gap tra una notifica e l'altra
 pub async fn get_last_indexed_block(pool: &PgPool) -> Result<i64, Box<dyn Error + Send + Sync>> {
     let row = sqlx::query("SELECT last_block_indexed FROM indexer_state WHERE id = 1")
         .fetch_one(pool)
@@ -13,7 +15,9 @@ pub async fn get_last_indexed_block(pool: &PgPool) -> Result<i64, Box<dyn Error 
     Ok(last_block)
 }
 
-//metodo per fare UPDATE sull'ultimo blocco salvato sul db
+// aggiorna il numero dell'ultimo blocco indicizzato nella tabella indexer_state
+// viene chiamato ogni volta che un blocco viene salvato con successo, in modo che
+// in caso di riavvio il catch-up sappia esattamente da dove riprendere
 pub async fn update_last_indexed_block(
     pool: &PgPool, 
     block_number: i64
@@ -30,14 +34,16 @@ pub async fn update_last_indexed_block(
     Ok(())
 }
 
-//metodo per salvare blocco
+// inserisce un blocco nella tabella blocks all'interno di una transazione aperta
+// i campi del blocco arrivano in esadecimale da Alchemy e vengono convertiti in
+// interi prima di essere salvati
+// ON CONFLICT DO NOTHING evita errori se il blocco è già presente
 pub async fn save_block(
     db_transazione: &mut Transaction<'_, Postgres>,
     block: &Block
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     
-    
-    //trasformo da esadecimali
+    // i valori numerici arrivano come stringhe esadecimali e vengono convertiti in i64 prima di essere passati alla query
     let block_number = hex_to_i64(&block.number)?;
     let timestamp = hex_to_i64(&block.timestamp)?;
     let gas_used = hex_to_i64(&block.gas_used)?;
@@ -67,14 +73,16 @@ pub async fn save_block(
 }
 
 
-
-
+// recupera tutti i blocchi salvati nel database ordinati per numero crescente
+// viene usato all'avvio quando non c'è gap: invece di riscaricaricare tutto
+// si ricostruisce il Verkle tree direttamente dai dati già in locale
 pub async fn get_all_blocks(pool: &PgPool)-> Result<Vec<(i64, String)>, Box<dyn Error + Send + Sync>> {
     
     let rows = sqlx::query("SELECT number, hash FROM blocks ORDER BY number ASC")
         .fetch_all(pool)
         .await?;
- 
+    
+    // trasforma ogni riga in una tupla (numero, hash) 
     let blocks = rows
         .iter()
         .map(|row| {
