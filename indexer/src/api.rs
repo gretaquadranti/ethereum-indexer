@@ -26,10 +26,6 @@ struct ProofTemplate {
 #[derive(Template)]
 #[template(path = "home.html")]
 struct HomeTemplate;
-
-
-
-
 //-----------------HANDLER HOME-------------------
 pub async fn home(
 )-> Html<String>{
@@ -37,7 +33,6 @@ pub async fn home(
     Html(template.render().unwrap())
 }
 
-//------------------handler--------------------
 pub async fn get_proof_html(
     Path(block_number): Path<i64>,
     State(state): State<AppState>,

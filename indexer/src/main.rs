@@ -45,7 +45,7 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
         env::var("DB_USER")?,
         env::var("DB_PASSWORD")?,
         env::var("DB_HOST")?,
-        env::var("DB_NAME")?
+        env::var("DB_NAME")? 
     );
     
     let db_pool = PgPool::connect(&db_conn).await?;
@@ -53,8 +53,10 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     let db_pool = Arc::new(db_pool);
 
     // ----------------------SETUP DEL VERKLE-----------------------------------------
+    let inizio_setup = Instant::now();
    
     let pk = trusted_setup(255);
+    println!("trusted setup completato in {:.2?}", inizio_setup.elapsed());
     //l'albero può essere condiviso + mutex ovvero che quando qualcuno scrive sul verkle
     //nessun'altro ci può scrivere
     let tree = Arc::new(Mutex::new(VerkleTree::new(pk)));
@@ -79,7 +81,7 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     
     if gap > 0 {
         println!("gap detected: {} blocks", gap);
-
+        let inizio_catchup = Instant::now(); 
         //lock viene tenuto per l'intera durata del ciclo di catch-up, in modo che
         //nessun altro task possa scrivere mentre si ripristina 
         let mut tree_lock = tree.lock().await;
@@ -94,8 +96,9 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
 
                     let key = utils::block_number_to_key(block_num);
                     let value = utils::hash_to_value(&block.hash);
+                    let inizio_insert = Instant::now();
                     tree_lock.insert(key, value);
-                    println!("catch-up: blocco {} inserito nel tree", block_num);
+                    println!("catch-up: blocco {} inserito nel tree in{:.2?}", block_num, inizio_insert.elapsed());
                 }
                 Err(e) => {
                     // se c'è errore, non interrompo il catchup ma salto quel blocco
@@ -105,6 +108,7 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
         }
         drop(tree_lock); 
         println!("catch-up completo");
+        println!("catch-up completo in {:.2?}", inizio_catchup.elapsed()); 
     } else {
         // nessun gap tra quelli sul db e quelli sulla blockchain -> carico quelli già nel DB nel tree
         println!("already up to date — carico blocchi dal DB...");
@@ -112,17 +116,20 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
 
         //recupero tutti i blocchi che sono sul db
         let blocks = db::get_all_blocks(&db_pool).await?;
+        println!("lettura dal DB completata in {:.2?}", inizio.elapsed());
+        
         let mut tree_lock = tree.lock().await;
-
+        
+        let inizio_tree = Instant::now();
+        
         for (numero, hash) in &blocks {
             let key = utils::block_number_to_key(*numero);
             let value = utils::hash_to_value(hash);
 
             tree_lock.insert(key, value);
         }
-        let durata = inizio.elapsed();
-        println!("caricati {} blocchi in {:.2?}", blocks.len(), durata);
-
+       
+       println!("inserimento nel tree completato in {:.2?}", inizio_tree.elapsed());
         drop(tree_lock); 
     }
 
@@ -141,6 +148,7 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     //Arc::clone crea dei CLONI che puntano tutti alla stessa memoria heap, incrementando il contatore dei riferimenti
     //ciasuna task prende il possessio del proprio puntatore usando MOVE
     //non incappo in problemi di sovrascrittura perchè viene messo il mutex
+    
     let tree_ws    = Arc::clone(&tree);
     let tree_api   = Arc::clone(&tree);
     let alchemy_clone = Arc::clone(&alchemy_http);
