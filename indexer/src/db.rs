@@ -4,8 +4,6 @@ use crate::utils::hex_to_i64;
 use std::error::Error;
 
 // legge dal database l'ultimo numero di blocco che è stato indicizzato
-// viene usato all'avvio per sapere da dove riprendere il catch-up, e dalla
-// callback WebSocket per rilevare eventuali gap tra una notifica e l'altra
 pub async fn get_last_indexed_block(pool: &PgPool) -> Result<i64, Box<dyn Error + Send + Sync>> {
     let row = sqlx::query("SELECT last_block_indexed FROM indexer_state WHERE id = 1")
         .fetch_one(pool)
@@ -15,9 +13,8 @@ pub async fn get_last_indexed_block(pool: &PgPool) -> Result<i64, Box<dyn Error 
     Ok(last_block)
 }
 
-// aggiorna il numero dell'ultimo blocco indicizzato nella tabella indexer_state
+
 // viene chiamato ogni volta che un blocco viene salvato con successo, in modo che
-// in caso di riavvio il catch-up sappia esattamente da dove riprendere
 pub async fn update_last_indexed_block(
     pool: &PgPool, 
     block_number: i64
@@ -34,10 +31,7 @@ pub async fn update_last_indexed_block(
     Ok(())
 }
 
-// inserisce un blocco nella tabella blocks all'interno di una transazione aperta
-// i campi del blocco arrivano in esadecimale da Alchemy e vengono convertiti in
-// interi prima di essere salvati
-// ON CONFLICT DO NOTHING evita errori se il blocco è già presente
+
 pub async fn save_block(
     db_transazione: &mut Transaction<'_, Postgres>,
     block: &Block
@@ -73,16 +67,13 @@ pub async fn save_block(
 }
 
 
-// recupera tutti i blocchi salvati nel database ordinati per numero crescente
-// viene usato all'avvio quando non c'è gap: invece di riscaricaricare tutto
-// si ricostruisce il Verkle tree direttamente dai dati già in locale
+//al momento dell'avvio 
 pub async fn get_all_blocks(pool: &PgPool)-> Result<Vec<(i64, String)>, Box<dyn Error + Send + Sync>> {
     
     let rows = sqlx::query("SELECT number, hash FROM blocks ORDER BY number ASC")
         .fetch_all(pool)
         .await?;
     
-    // trasforma ogni riga in una tupla (numero, hash) 
     let blocks = rows
         .iter()
         .map(|row| {
@@ -93,4 +84,44 @@ pub async fn get_all_blocks(pool: &PgPool)-> Result<Vec<(i64, String)>, Box<dyn 
         .collect();
  
     Ok(blocks)
+}
+
+
+pub async fn save_node(
+    pool: &PgPool,
+    path: &str,
+    node_type: &str,
+    commitment_bytes: &[u8],
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    sqlx::query(
+        "INSERT INTO verkle_nodes (node_path, node_type, commitment)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (node_path) DO UPDATE SET commitment = $3"
+    )
+    .bind(path)
+    .bind(node_type)
+    .bind(commitment_bytes)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+
+pub async fn load_all_nodes(
+    pool: &PgPool,
+) -> Result<Vec<(String, String, Vec<u8>)>, Box<dyn Error + Send + Sync>> {
+    let rows = sqlx::query(
+        "SELECT node_path, node_type, commitment FROM verkle_nodes"
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let nodes = rows.iter().map(|row| {
+        let path: String  = row.get(0);
+        let ntype: String = row.get(1);
+        let comm: Vec<u8> = row.get(2);
+        (path, ntype, comm)
+    }).collect();
+
+    Ok(nodes)
 }

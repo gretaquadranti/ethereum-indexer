@@ -62,7 +62,7 @@ pub async fn get_proof_html(
     };
 
     //chiamo il metodo del verkletree per la verifica
-    let valid = VerkleTree::verify_proof(&proof, tree_lock.getter_pk(), root);
+    let valid = VerkleTree::verify_proof(&proof, tree_lock.getter_pk(), root, key);
     //salvo hash
     let hash = format!("0x{}", hex::encode(&proof.value[0..32]));
 

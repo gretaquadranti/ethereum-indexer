@@ -3,9 +3,7 @@ mod db;
 mod alchemy;
 mod utils;
 mod api;
- 
 use models::Block;
-use std::time::Instant;
 use dotenv::dotenv;
 use std::env;
 use sqlx::PgPool;
@@ -19,8 +17,7 @@ use verkle_project::{VerkleTree, kzg::trusted_setup};
 // viene avviato un thread dedicato con uno stack allargato (64 MB invece
 // dei 2 MB predefiniti) perché sennò stack overflow
 fn main() {
-    let stack_size = 64 * 1024 * 1024; // 64MB
-    //creo dei thread però con memoria da 64mb
+    let stack_size = 64 * 1024 * 1024; 
     let builder = std::thread::Builder::new().stack_size(stack_size);
     
     let handler = builder.spawn(|| {
@@ -38,8 +35,6 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     dotenv().ok();
 
     // -------------------------DB CONNESSIONE--------------------------------------
-    // pgPool gestisce internamente più connessioni concorrenti,
-    // quindi una singola istanza del pool può essere condivisa tra i task 
     let db_conn = format!(
         "postgres://{}:{}@{}/{}",
         env::var("DB_USER")?,
@@ -53,12 +48,9 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     let db_pool = Arc::new(db_pool);
 
     // ----------------------SETUP DEL VERKLE-----------------------------------------
-    let inizio_setup = Instant::now();
-   
+
     let pk = trusted_setup(255);
-    println!("trusted setup completato in {:.2?}", inizio_setup.elapsed());
-    //l'albero può essere condiviso + mutex ovvero che quando qualcuno scrive sul verkle
-    //nessun'altro ci può scrivere
+    //l'albero può essere condiviso + mutex 
     let tree = Arc::new(Mutex::new(VerkleTree::new(pk)));
     println!("verkle tree initialized");
 
@@ -78,76 +70,68 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     println!("latest on chain: {}", latest_on_chain);
 
     let gap = latest_on_chain - last_indexed;
+
+    let mut tree_lock = tree.lock().await;
     
-    if gap > 0 {
-        println!("gap detected: {} blocks", gap);
-        let inizio_catchup = Instant::now(); 
-        //lock viene tenuto per l'intera durata del ciclo di catch-up, in modo che
-        //nessun altro task possa scrivere mentre si ripristina 
-        let mut tree_lock = tree.lock().await;
+    let blocks = db::get_all_blocks(&db_pool).await?;
+    let nodes  = db::load_all_nodes(&db_pool).await?;
 
-        //parto dal il blocco successivo a quello salvato sull'indexer 
-        for block_num in (last_indexed + 1)..=latest_on_chain {
-            match index_block(&alchemy_http, &db_pool, block_num).await {
-
-                Ok(block) => {
-                    
-                    db::update_last_indexed_block(&db_pool, block_num).await?;
-
-                    let key = utils::block_number_to_key(block_num);
-                    let value = utils::hash_to_value(&block.hash);
-                    let inizio_insert = Instant::now();
-                    tree_lock.insert(key, value);
-                    println!("catch-up: blocco {} inserito nel tree in{:.2?}", block_num, inizio_insert.elapsed());
-                }
-                Err(e) => {
-                    // se c'è errore, non interrompo il catchup ma salto quel blocco
-                    eprintln!("errore blocco {}: {}. skipping.", block_num, e);
-                }
-            }
-        }
-        drop(tree_lock); 
-        println!("catch-up completo");
-        println!("catch-up completo in {:.2?}", inizio_catchup.elapsed()); 
-    } else {
-        // nessun gap tra quelli sul db e quelli sulla blockchain -> carico quelli già nel DB nel tree
-        println!("already up to date — carico blocchi dal DB...");
-        let inizio = Instant::now();
-
-        //recupero tutti i blocchi che sono sul db
-        let blocks = db::get_all_blocks(&db_pool).await?;
-        println!("lettura dal DB completata in {:.2?}", inizio.elapsed());
-        
-        let mut tree_lock = tree.lock().await;
-        
-        let inizio_tree = Instant::now();
-        
-        for (numero, hash) in &blocks {
-            let key = utils::block_number_to_key(*numero);
+    for (numero, hash) in &blocks {
+            let key   = utils::block_number_to_key(*numero);
             let value = utils::hash_to_value(hash);
 
-            tree_lock.insert(key, value);
+            tree_lock.insert(key, value, false); //FALSE perche non ricalcola commitment
         }
+        tree_lock.load_commitments_from_db(nodes);
+
+
+        if gap > 0 {
+            println!("gap detected: {} blocks", gap);
+            for block_num in (last_indexed + 1)..=latest_on_chain {
+            println!("inizio elaborazione blocco {}", block_num); 
+
+            match index_block(&alchemy_http, &db_pool, block_num).await {
+                Ok(block) => {
+                    println!("blocco {} scaricato da alchemy", block_num);
+                    let key = utils::block_number_to_key(block_num);
+                    let value = utils::hash_to_value(&block.hash);
+                    
+                    println!("insert nel tree...", ); 
+
+                    let vec_Mod_Nodes= tree_lock.insert(key, value, true); 
+                    println!(" insert completato, nodi modificati: {}", vec_Mod_Nodes.len()); 
+                    
+                    for node in vec_Mod_Nodes{
+                        if let Err(e) = db::save_node(&db_pool, &node.path, &node.node_type, &node.commitment_bytes).await {
+                            eprintln!("errore salvataggio nodo: {}", e);
+                        }                   
+                    }
+                    println!("nodi salvati", ); 
+                }
+                Err(e) => {
+                    eprintln!("errore blocco {}: {}. skipping.", block_num, e);
+                }  
+            }
+            println!("aggiorno last_indexed a {}", block_num); 
+
+            if let Err(e) = db::update_last_indexed_block(&db_pool, block_num).await {
+                eprintln!("errore update last indexed: {}", e);
+            } 
+        }
+    }
+    println!("scaricamento completato");
+
+
+    drop(tree_lock);
+    println!("catch-up completo");
+    
+    let tree_lock: tokio::sync::MutexGuard<'_, VerkleTree> = tree.lock().await;
+    if let Some(root) = tree_lock.get_root_commitment() {
+        println!("RADICE DEL TREE: {:?}", root);
+    }
+
        
-       println!("inserimento nel tree completato in {:.2?}", inizio_tree.elapsed());
-        drop(tree_lock); 
-    }
-
-    // calcolo il commitment della radice una volta dopo aver caricato tutti i nodi sul verkle tree
-    {
-        let tree_lock = tree.lock().await;
-        if let Some(root) = tree_lock.get_root_commitment() {
-            println!("RADICE DEL TREE: {:?}", root);
-        }
-        drop(tree_lock);
-    }
-
- 
     // ----------------------------SETUP PER TASK-----------------------------------
-    //creo dei cloni da passare ai task affinchè possano usarli anche se un'altro task
-    //Arc::clone crea dei CLONI che puntano tutti alla stessa memoria heap, incrementando il contatore dei riferimenti
-    //ciasuna task prende il possessio del proprio puntatore usando MOVE
-    //non incappo in problemi di sovrascrittura perchè viene messo il mutex
     
     let tree_ws    = Arc::clone(&tree);
     let tree_api   = Arc::clone(&tree);
@@ -156,22 +140,13 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
 
     // -------------------------TASK 1: WEBSOCKET--------------------------------------
     
-    // task che apre una connessione WebSocket persistente e riceve
-    // una notifica ogni volta che viene minato un nuovo blocco.
-    //scarica il blocco completo, lo salva nel database e aggiorna il Verkle tree
-    // visto che nuovi blocchi possono arrivare più velocemente di quanto vengano elaborati,
-    // la callback controlla eventuali gap e li inserisce in ordine
-
+    
     let ws_task = tokio::spawn(async move {
         let ws = alchemy::AlchemyWebSocket::new(api_key);
 
-//callback riceve il numero di blocco in esadecimale
-//il callback viene chiamato ogni volta che arriva un nuovo blocco dalla blockchain
+        //riceve blocco hex
         let callback = move |block_hex: String| -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
             
-            //clone perch questo task puo essere svolto contemporaneamnete piu volte
-            //ad ogni nuovo blocco si ha una callback che gira in parallelo
-            //e quindi si ha anche che ogni callback deve avere un clone di questi parametri
             let alchemy = Arc::clone(&alchemy_clone);
             let db      = Arc::clone(&db_clone);
             let tree    = Arc::clone(&tree_ws);
@@ -182,7 +157,6 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
                     return;
                 };
 
-                
                 eprintln!("new block: {}", block_num);
 
                 // legge l'ultimo numero di blocco salvato per vedere 
@@ -208,7 +182,7 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
                             }
                             let key   = utils::block_number_to_key(num);
                             let value = utils::hash_to_value(&block.hash);
-                            tree.lock().await.insert(key, value);
+                            tree.lock().await.insert(key, value, true);
                             eprintln!("block {} indexed e inserito nel tree", num);
                         }
                         Err(e) => {
@@ -223,11 +197,7 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     });
 
     // -----------------------TASK 2: API HTTP---------------------------------------
-    // il task avvia un server http Axum che espone gli endpoint per interrogare il
-    // Verkle tree
-    // Il riferimento al tree viene passato al router in modo che gli handler possano
-    // accedervi senza ricorrere a stato globale.
-
+   
     let api_task = tokio::spawn(async move {
 
         let router = api::build_router(tree_api);
@@ -259,7 +229,7 @@ pub async fn index_block(
     db_pool: &PgPool,
     block_number: i64,
 ) -> Result<Block, Box<dyn std::error::Error + Send + Sync>> {
-    //recupero il blocco richiesto
+
     let block = alchemy.get_block(block_number).await?;
 
     let mut db_transazione = db_pool.begin().await?;

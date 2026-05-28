@@ -22,9 +22,6 @@ impl AlchemyWebSocket {
         Self { url }
     }
 
-
-    // apre la connessione WebSocket, si iscrive al feed dei nuovi blocchi ed entra
-    // nel loop di ascolto
     async fn connect_and_listen<F>(
     &self,
     callback: &mut F
@@ -89,8 +86,6 @@ where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'sta
             write.send(Message::Pong(dati)).await?;
         }
 
-        //ilserver ha chiuso la connessione in modo pulito, esce dal loop
-        // e lascio che subscribe_new_blocks gestisca la riconnessione
         else if messaggio.is_close() {
             println!("server ha chiuso la connessione");
             break;
@@ -102,9 +97,7 @@ where F: FnMut(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + 'sta
 }
 
 
-    //punto di ingresso pubblico per avviare l'ascolto dei nuovi blocchi -> chiama
-    // connect_and_listen in un loop infinito- se la connessione cade,
-    // il sistema si riconnetta automaticamente senza dover riavviare il programma
+    //punto di ingresso pubblico per avviare l'ascolto dei nuovi blocchi 
     pub async fn subscribe_new_blocks<F>(
         &self, 
         mut callback: F 
@@ -155,69 +148,64 @@ impl AlchemyClient {
     // e il blocco piu recente della chain
     pub async fn get_latest_block_number(&self) -> Result<i64, Box<dyn Error + Send + Sync>> {
    
-   //preparo la richiesta
-    let request = JsonRPCRequest {
-        jsonrpc: "2.0".to_string(),
-        method: "eth_blockNumber".to_string(), 
-        params: vec![],  
-        id: 1,
-    };
+    //preparo la richiesta
+        let request = JsonRPCRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "eth_blockNumber".to_string(), 
+            params: vec![],  
+            id: 1,
+        };
     
-    let response = self.http_client
-        .post(&self.url)
-        .json(&request) 
-        .send() 
-        .await?;
+        let response = self.http_client
+            .post(&self.url)
+            .json(&request) 
+            .send() 
+            .await?;
     
-    let result: JsonRPCResponse<String> = response.json().await?;
-    
-    let block_hex = result.result
-        .ok_or("No result in response")?;
-    
-    let block_number = crate::utils::hex_to_i64(&block_hex)?;
-    Ok(block_number)
-}
+        let result: JsonRPCResponse<String> = response.json().await?;
+        
+        let block_hex = result.result
+            .ok_or("No result in response")?;
+        
+        let block_number = crate::utils::hex_to_i64(&block_hex)?;
+        Ok(block_number)
+    }
     
     
    //scarica il blocco completo dato il suo numero
-pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error + Send + Sync>> {
-    let block_hex = format!("0x{:x}", block_number);
+    pub async fn get_block(&self, block_number: i64) -> Result<Block, Box<dyn Error + Send + Sync>> {
+        let block_hex = format!("0x{:x}", block_number);
+        
     
-   
-    let request = JsonRPCRequest {
-        jsonrpc: "2.0".to_string(),
-        method: "eth_getBlockByNumber".to_string(),
-        params: vec![
-            json!(block_hex),  
-            json!(true) //per ora false -> non uso informazioni sulle transazioni
-        ],
-        id: 1,
-    };
+        let request = JsonRPCRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "eth_getBlockByNumber".to_string(),
+            params: vec![
+                json!(block_hex),  
+                json!(true)],
+            id: 1,
+        };
     
-    let response = self.http_client
-        .post(&self.url)
-        .json(&request)
-        .send()
-        .await?;
-    
-    let response_text = response.text().await?;
+        let response = self.http_client
+            .post(&self.url)
+            .json(&request)
+            .send()
+            .await?;
+        
+        let response_text = response.text().await?;
 
-    let result: JsonRPCResponse<Block> = serde_json::from_str(&response_text)
-        .map_err(|e| {
-            eprintln!("Failed to parse response for block {}: {}", block_number, e);
-            eprintln!("Response body: {}", response_text);
-            e
-        })?;
+        let result: JsonRPCResponse<Block> = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                eprintln!("Failed to parse response for block {}: {}", block_number, e);
+                eprintln!("Response body: {}", response_text);
+                e
+            })?;
     
 
-    if let Some(error) = result.error {
-        return Err(format!("RPC error: {:?}", error).into());
+        if let Some(error) = result.error {
+            return Err(format!("RPC error: {:?}", error).into());
+        }
+
+        result.result.ok_or_else(|| "Block not found or null result".into())
     }
-
-    result.result.ok_or_else(|| "Block not found or null result".into())
-}
-    
-    
-
-
 }
