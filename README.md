@@ -78,8 +78,6 @@ DB_NAME=nome_del_database
 cd indexer
 cargo run --release
 
----
-
 ## API
 
 ### `GET /`
