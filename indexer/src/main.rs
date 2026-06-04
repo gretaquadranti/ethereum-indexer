@@ -80,46 +80,53 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
             let key   = utils::block_number_to_key(*numero);
             let value = utils::hash_to_value(hash);
 
+            
+
             tree_lock.insert(key, value, false); //FALSE perche non ricalcola commitment
         }
         tree_lock.load_commitments_from_db(nodes);
 
 
-        if gap > 0 {
+    
+            if gap > 0 {
             println!("gap detected: {} blocks", gap);
+
             for block_num in (last_indexed + 1)..=latest_on_chain {
-            println!("inizio elaborazione blocco {}", block_num); 
+                println!("elaborazione blocco {}", block_num);
 
-            match index_block(&alchemy_http, &db_pool, block_num).await {
-                Ok(block) => {
-                    println!("blocco {} scaricato da alchemy", block_num);
-                    let key = utils::block_number_to_key(block_num);
-                    let value = utils::hash_to_value(&block.hash);
-                    
-                    println!("insert nel tree...", ); 
-
-                    let vec_Mod_Nodes= tree_lock.insert(key, value, true); 
-                    println!(" insert completato, nodi modificati: {}", vec_Mod_Nodes.len()); 
-                    
-                    for node in vec_Mod_Nodes{
-                        if let Err(e) = db::save_node(&db_pool, &node.path, &node.node_type, &node.commitment_bytes).await {
-                            eprintln!("errore salvataggio nodo: {}", e);
-                        }                   
+                match index_block(&alchemy_http, &db_pool, block_num).await {
+                    Ok(block) => {
+                        let key   = utils::block_number_to_key(block_num);
+                        let value = utils::hash_to_value(&block.hash);
+                        tree_lock.insert(key, value, false);
                     }
-                    println!("nodi salvati", ); 
+                    Err(e) => {
+                        eprintln!("errore blocco {}: {}. skipping.", block_num, e);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("errore blocco {}: {}. skipping.", block_num, e);
-                }  
-            }
-            println!("aggiorno last_indexed a {}", block_num); 
 
-            if let Err(e) = db::update_last_indexed_block(&db_pool, block_num).await {
+            
+            }
+
+            println!("ricalcolo commitment...");
+            let start = std::time::Instant::now();
+            let tutti_i_nodi = tree_lock.ricalcola_tutto(); //attraversa tutti i nodi del tree
+            println!("ricalcola_tutto: {:?}", start.elapsed());
+
+            for node in tutti_i_nodi {
+                if let Err(e) = db::save_node(&db_pool, &node.path, &node.node_type, &node.commitment_bytes).await {
+                    eprintln!("errore salvataggio nodo: {}", e);
+                }
+            }
+            println!("nodi salvati");
+        
+       
+        if let Err(e) = db::update_last_indexed_block(&db_pool, latest_on_chain).await {
                 eprintln!("errore update last indexed: {}", e);
-            } 
+            }
+            println!("last_indexed aggiornato a {}", latest_on_chain);
         }
-    }
-    println!("scaricamento completato");
+        println!("scaricamento completato");
 
 
     drop(tree_lock);
@@ -129,6 +136,8 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     if let Some(root) = tree_lock.get_root_commitment() {
         println!("RADICE DEL TREE: {:?}", root);
     }
+
+    drop(tree_lock);
 
        
     // ----------------------------SETUP PER TASK-----------------------------------
@@ -159,9 +168,7 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
 
                 eprintln!("new block: {}", block_num);
 
-                // legge l'ultimo numero di blocco salvato per vedere 
-                //se sono stati saltati dei blocchi tra la notifica e la precedente
-                let Ok(ultimo_blocco_letto) = db::get_last_indexed_block(&db).await else {
+             let Ok(ultimo_blocco_letto) = db::get_last_indexed_block(&db).await else {
                     eprintln!("error getting last indexed block");
                     return;
                 };
@@ -171,27 +178,61 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
                     return;
                 }
 
-                //scorro dall'ultimo blocco che ho letto fino all'ultimo blocco che si trova su eth
-                for num in (ultimo_blocco_letto + 1)..=block_num {
-                    match index_block(&alchemy, &db, num).await {
-                       
-                        Ok(block) => {
-                            if let Err(e) = db::update_last_indexed_block(&db, num).await {
-                                eprintln!("error updating state: {}", e);
-                                continue;
-                            }
-                            let key   = utils::block_number_to_key(num);
-                            let value = utils::hash_to_value(&block.hash);
-                            tree.lock().await.insert(key, value, true);
-                            eprintln!("block {} indexed e inserito nel tree", num);
-                        }
-                        Err(e) => {
-                            eprintln!("error indexing block {}: {}", num, e);
-                        }
-                    }
+
+                let gap_ws = block_num - ultimo_blocco_letto;
+                if gap_ws > 1 {
+                    println!("gap rilevato nel websocket: {} blocchi mancanti ({} → {})", gap_ws, ultimo_blocco_letto, block_num);
                 }
-            })
-        };
+
+                for num in (ultimo_blocco_letto + 1)..=block_num {
+                    println!("ws: elaborazione blocco {}", num);
+                       
+                    let block = match index_block(&alchemy, &db, num).await {
+                        Ok(b) => b,
+                        Err(e) => { 
+                            eprintln!("error indexing block {}: {}", num, e); 
+                            continue;
+                         }
+                    };
+
+                    let key   = utils::block_number_to_key(num);
+                    let value = utils::hash_to_value(&block.hash);
+
+
+                    let mut tree_lock = tree.lock().await;
+
+                    let ultimo_aggiornato = match db::get_last_indexed_block(&db).await{
+                                Ok(v) => v,
+                                Err(e) => { eprintln!("error reading last indexed: {}", e); continue; }
+                            };
+                    
+                    if num <= ultimo_aggiornato {
+                        eprintln!("block {} già inserito da altro callback, skip", num);
+                        continue;
+                    }
+
+                    let start = std::time::Instant::now();
+
+
+                    let vec_mod_node_ws = tree_lock.insert(key, value, true);
+
+                     for nodes_ws in vec_mod_node_ws{
+                               
+                                if let Err(e) = db::save_node(&db, &nodes_ws.path, &nodes_ws.node_type, &nodes_ws.commitment_bytes).await {
+                                    eprintln!("ERRORE salvataggio nodo {}: {}. Tree e DB potrebbero essere out of sync.", nodes_ws.path, e);                                }
+                            }
+                        
+
+                    if let Err(e) = db::update_last_indexed_block(&db, num).await {
+                        println!("error updating last indexed: {}", e);
+                        }
+                    println!("block {} indexed e inserito nel tree", num);
+                    println!("inserimento web_socket: {:?}", start.elapsed());
+
+                    }
+                    })
+                    };
+                    
      _ = ws.subscribe_new_blocks(callback).await;
         
     });

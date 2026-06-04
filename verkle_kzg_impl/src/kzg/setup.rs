@@ -3,7 +3,8 @@ use ark_ec::Group;
 use rand::thread_rng;
 use ark_ff::UniformRand;
 
-pub struct PublicKey {
+#[derive(Clone)]
+    pub struct PublicKey {
     pub t: usize,
      // [g1, alpha·g1, α^2·g1, ..., α^max_degree·g1]
     pub g1_vector: Vec<G1Projective>,

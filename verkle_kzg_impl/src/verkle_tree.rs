@@ -300,6 +300,69 @@ impl VerkleTree {
             });
         }
     }
+
+
+
+
+    pub fn ricalcola_tutto(&mut self) -> Vec<ModifyNode> {
+        let mut mod_nodes = Vec::new(); 
+        let pk = &self.pk;
+        
+        Self::ricalcola_ricorsivo(&mut self.root, pk, &mut mod_nodes, String::new());
+
+   
+        mod_nodes
+    }
+ 
+    fn ricalcola_ricorsivo(
+        node: &mut BranchNode,
+        pk: &PublicKey,
+        mod_nodes: &mut Vec<ModifyNode>,
+        path: String,
+    ) {
+      
+        for i in 0..256 {
+            let percorso_figlio = format!("{}{:02x}", path, i);
+ 
+            match &mut node.children[i] {
+                
+                Some(NodeRef::Stem(stem_node)) => {
+                   
+                    let commit = stem_node.compute_commitment(pk);
+                    mod_nodes.push(ModifyNode {
+                        path: percorso_figlio,
+                        node_type: "stem".to_string(),
+                        commitment_bytes: commitment_to_value(commit),
+                    });
+                }
+           
+                Some(NodeRef::Branch(branch)) => {
+                    // scendo ricorsivamente prima di calcolare il commitment di questo branch
+                    Self::ricalcola_ricorsivo(branch, pk, mod_nodes, percorso_figlio.clone());
+                    let commit = branch.compute_commitment(pk);
+                    mod_nodes.push(ModifyNode {
+                        path: percorso_figlio,
+                        node_type: "branch".to_string(),
+                        commitment_bytes: commitment_to_value(commit),
+                    });
+                }
+                None => {}
+            }
+        }
+ 
+       
+        let commit_root = node.compute_commitment(pk);
+ 
+       
+        if path.is_empty() {
+            mod_nodes.push(ModifyNode {
+                path,
+                node_type: "root".to_string(),
+                commitment_bytes: commitment_to_value(commit_root),
+            });
+        }
+    }
+
     
     pub fn load_commitments_from_db(
     &mut self,
@@ -543,4 +606,175 @@ pub struct MembershipProof {
     pub value: Value,  
     pub key: Key
             
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kzg::trusted_setup;
+
+    
+    fn make_key(n: i64) -> Key {
+        let mut key = [0u8; 32];
+        key[24..32].copy_from_slice(&n.to_be_bytes());
+        key
+    }
+
+    fn make_value(hex: &str) -> Value {
+        let mut value = [0u8; 48];
+        let bytes = hex::decode(hex).unwrap();
+        value[0..bytes.len()].copy_from_slice(&bytes);
+        value
+    }
+
+
+    // ---------------------------INSERT e GET------------------------------------
+
+    #[test]
+    fn test_inserimento_e_recupero() {
+        let pk = trusted_setup(255);
+        let mut tree = VerkleTree::new(pk);
+
+        let key = make_key(1); 
+        let value = make_value("0000000000000000000000000000000000000000000000000000000000000001"); 
+
+        tree.insert(key, value, false);
+
+        let recuperato = tree.get(&key);
+     
+        assert!(recuperato.is_some(), "il valore dovrebbe essere presente nel tree"); 
+        assert_eq!(recuperato.unwrap(), value);
+    }
+
+    
+    #[test]
+    fn test_inserimento_multiplo() {
+        let pk = trusted_setup(255);
+        let mut tree = VerkleTree::new(pk);
+
+        for i in 0i64..5 {
+            let key = make_key(i); //creo la chiave 0,1,2,3,5
+            let value = make_value(&format!("{:064x}", i)); //valore 0,1,2,
+            tree.insert(key, value, false); //inserisco senza commitment
+        }
+
+        for i in 0i64..5 {
+            let key = make_key(i); 
+            let value = make_value(&format!("{:064x}", i)); 
+            assert_eq!(tree.get(&key).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn test_sovrascrittura_valore() {
+        let pk = trusted_setup(255);
+        let mut tree = VerkleTree::new(pk);
+
+        let key = make_key(1);
+        let value1 = make_value("0000000000000000000000000000000000000000000000000000000000000001");
+        let value2 = make_value("0000000000000000000000000000000000000000000000000000000000000002");
+
+        tree.insert(key, value1, false);
+        tree.insert(key, value2, false);
+
+        assert_eq!(tree.get(&key).unwrap(), value2, "il valore dovrebbe essere aggiornato");
+    }
+
+  
+    
+    // ------------------------COMMITMENT---------------------------------------
+
+    
+
+    #[test]
+    fn test_commitment_cambia_dopo_nuovo_blocco() {
+        let pk = trusted_setup(255);
+        let mut tree1 = VerkleTree::new(pk.clone()); 
+        let mut tree2 = VerkleTree::new(pk);
+
+        let key1 = make_key(1);
+        let key2 = make_key(2);
+        let value = make_value("0000000000000000000000000000000000000000000000000000000000000001");
+
+        tree1.insert(key1, value, true);
+        tree2.insert(key1, value, true);
+        tree2.insert(key2, value, true);
+
+       
+        let root1 = tree1.get_root_commitment().unwrap();
+        let root2 = tree2.get_root_commitment().unwrap();
+
+        assert_ne!(root1.inner, root2.inner);
+    }
+
+
+    // ---------------------------PROVE e VERIFY ------------------------------------
+
+    #[test]
+    fn test_prova_e_verifica_blocco_singolo() {
+        let pk = trusted_setup(255);
+        let mut tree = VerkleTree::new(pk);
+
+        let key = make_key(42);
+        let value = make_value("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
+
+        tree.insert(key, value, true);
+
+        let root = tree.get_root_commitment().unwrap();
+        let proof = tree.prove(&key).expect("la prova dovrebbe essere generabile");
+        let pk_ref = tree.getter_pk();
+
+        let valid = VerkleTree::verify_proof(&proof, pk_ref, root, key);
+        assert!(valid, "la prova di membership dovrebbe essere valida");
+    }
+
+    //inserisco due blocchi, chiave diversa ma valore uguale
+    #[test]
+    fn test_verifica_fallisce_con_chiave_sbagliata() {
+        let pk = trusted_setup(255);
+        let mut tree = VerkleTree::new(pk);
+
+        let key1 = make_key(1);
+        let key2 = make_key(2);
+        let value = make_value("0000000000000000000000000000000000000000000000000000000000000001");
+
+        tree.insert(key1, value, true);
+        tree.insert(key2, value, true);
+
+        let root = tree.get_root_commitment().unwrap();
+
+        let proof = tree.prove(&key1).unwrap(); 
+
+        let pk_ref = tree.getter_pk();
+
+      
+        let valid = VerkleTree::verify_proof(&proof, pk_ref, root, key2);
+       
+        assert!(!valid, "la verifica con chiave errata dovrebbe fallire");
+    }
+
+    #[test]
+    fn test_prova_e_verifica_piu_blocchi() {
+        let pk = trusted_setup(255);
+        let mut tree = VerkleTree::new(pk);
+
+        let hash_fake = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        for i in 0i64..10 {
+            let key = make_key(i);
+            let value = make_value(hash_fake);
+            tree.insert(key, value, true);
+        }
+
+        let root = tree.get_root_commitment().unwrap();
+
+        for i in 0i64..10 {
+            let key = make_key(i);
+            let proof = tree.prove(&key).expect(&format!("prova per blocco {} non trovata", i));
+            let valid = VerkleTree::verify_proof(&proof, tree.getter_pk(), root, key);
+            //se i test non passassero, allora assert si blocca e stampa "prova non valida per blocco "
+            assert!(valid, "prova non valida per blocco {}", i);
+        }
+    }
 }

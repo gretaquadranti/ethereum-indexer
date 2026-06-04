@@ -1,6 +1,6 @@
 # Verkle Tree Indexer
 
-Indexer per la blockchain Ethereum che scarica i blocchi, li salva su un database PostgreSQL e li inserisce in un **Verkle tree** i cui commitment sono calcolati con **KZG** (Kate-Zaverucha-Goldberg).
+Indexer per la blockchain Ethereum che scarica i blocchi, li salva su un database PostgreSQL e li inserisce in un **Verkle tree** i cui commitment sono calcolati con **KZG**.
 
 L'applicazione espone anche un'API HTTP che permette di richiedere una **prova di membership** per un qualsiasi blocco indicizzato e di verificarne la validità.
 
