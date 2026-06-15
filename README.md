@@ -13,9 +13,8 @@ Il progetto è diviso in due crate Rust:
 
 All'avvio l'indexer:
 
-1. Si connette al database e carica i blocchi già salvati nel Verkle tree (senza ricalcolare i commitment, recuperandoli dal DB).
-2. Calcola quanti blocchi mancano rispetto alla chain (_catch-up_) e li scarica uno a uno.
-3. Avvia due task in parallelo:
+1. Si connette al database, carica i blocchi già salvati e scarica quelli mancanti rispetto alla chain (catch-up), inserendo tutto nel Verkle tree senza calcolare i commitment. Alla fine ricalcola tutti i commitment in una sola passata.
+2. Avvia due task in parallelo:
    - **WebSocket** – rimane in ascolto su Alchemy e indicizza ogni nuovo blocco in tempo reale.
    - **API HTTP** – serve le richieste sulla porta `3000`.
 
@@ -45,12 +44,6 @@ CREATE TABLE indexer_state (
 id INTEGER PRIMARY KEY,
 last_block_indexed BIGINT NOT NULL,
 last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE verkle_nodes (
-node_path TEXT PRIMARY KEY,
-node_type TEXT NOT NULL,
-commitment BYTEA NOT NULL
 );
 
 \*Inserisci il punto di partenza (modifica il numero con l'ultimo blocco già disponibile)
@@ -98,9 +91,9 @@ La pagina HTML mostra:
 
 Ogni blocco viene inserito nel Verkle tree usando:
 
-- **Chiave**: il numero del blocco codificato in 32 byte
+- **Chiave**: il numero del blocco codificato in 32 byte. I byte del numero vengono copiati nelle posizioni 24..32, cioè negli ultimi 8 byte — quindi a destra. I primi 24 byte rimangono a zero.
 - **Valore**: l'hash del blocco codificato in 48 byte
 
-I commitment dei nodi vengono calcolati con KZG su BLS12-381. Per ogni blocco inserito, vengono aggiornati i commitment di tutti i nodi sul percorso dalla foglia alla radice, e le versioni aggiornate vengono salvate nel database per non doverle ricalcolare al prossimo avvio.
+I commitment dei nodi vengono calcolati con KZG su BLS12-381. Durante il catch-up tutti i blocchi vengono inseriti senza calcolare i commitment, poi ricalcola_tutto li calcola tutti in una sola passata. Per ogni nuovo blocco ricevuto via WebSocket vengono aggiornati solo i commitment sul percorso dalla foglia alla radice.
 
-La prova di membership (`/proof/:block_number`) dimostra crittograficamente che un blocco è presente nel tree senza dover rivelare tutti gli altri blocchi.
+La prova di membership (`/proof/:block_number`) dimostra che un blocco è presente nel tree senza dover rivelare tutti gli altri blocchi.

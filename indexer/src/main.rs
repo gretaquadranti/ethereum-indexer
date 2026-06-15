@@ -74,17 +74,14 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
     let mut tree_lock = tree.lock().await;
     
     let blocks = db::get_all_blocks(&db_pool).await?;
-    let nodes  = db::load_all_nodes(&db_pool).await?;
 
     for (numero, hash) in &blocks {
             let key   = utils::block_number_to_key(*numero);
             let value = utils::hash_to_value(hash);
 
-            
-
             tree_lock.insert(key, value, false); //FALSE perche non ricalcola commitment
         }
-        tree_lock.load_commitments_from_db(nodes);
+        
 
 
     
@@ -104,28 +101,22 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
                         eprintln!("errore blocco {}: {}. skipping.", block_num, e);
                     }
                 }
-
-            
             }
+        }
 
-            println!("ricalcolo commitment...");
-            let start = std::time::Instant::now();
-            let tutti_i_nodi = tree_lock.ricalcola_tutto(); //attraversa tutti i nodi del tree
-            println!("ricalcola_tutto: {:?}", start.elapsed());
+        println!("ricalcolo commitment");
+        let start = std::time::Instant::now();
+        tree_lock.ricalcola_tutto(); //attraversa tutti i nodi del tree
+        println!("ricalcola_tutto: {:?}", start.elapsed());
 
-            for node in tutti_i_nodi {
-                if let Err(e) = db::save_node(&db_pool, &node.path, &node.node_type, &node.commitment_bytes).await {
-                    eprintln!("errore salvataggio nodo: {}", e);
-                }
-            }
-            println!("nodi salvati");
-        
-       
-        if let Err(e) = db::update_last_indexed_block(&db_pool, latest_on_chain).await {
+           
+        if gap>0 {
+            if let Err(e) = db::update_last_indexed_block(&db_pool, latest_on_chain).await {
                 eprintln!("errore update last indexed: {}", e);
             }
             println!("last_indexed aggiornato a {}", latest_on_chain);
         }
+        
         println!("scaricamento completato");
 
 
@@ -214,14 +205,7 @@ async fn async_operation() -> Result<(), Box<dyn std::error::Error + Send + Sync
                     let start = std::time::Instant::now();
 
 
-                    let vec_mod_node_ws = tree_lock.insert(key, value, true);
-
-                     for nodes_ws in vec_mod_node_ws{
-                               
-                                if let Err(e) = db::save_node(&db, &nodes_ws.path, &nodes_ws.node_type, &nodes_ws.commitment_bytes).await {
-                                    eprintln!("ERRORE salvataggio nodo {}: {}. Tree e DB potrebbero essere out of sync.", nodes_ws.path, e);                                }
-                            }
-                        
+                    tree_lock.insert(key, value, true);
 
                     if let Err(e) = db::update_last_indexed_block(&db, num).await {
                         println!("error updating last indexed: {}", e);
