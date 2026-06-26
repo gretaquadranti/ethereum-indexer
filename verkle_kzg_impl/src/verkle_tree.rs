@@ -304,63 +304,28 @@ impl VerkleTree {
 
 
 
-    pub fn ricalcola_tutto(&mut self) -> Vec<ModifyNode> {
-        let mut mod_nodes = Vec::new(); 
+    pub fn ricalcola_tutto(&mut self) {
         let pk = &self.pk;
-        
-        Self::ricalcola_ricorsivo(&mut self.root, pk, &mut mod_nodes, String::new());
-
-   
-        mod_nodes
+        Self::ricalcola_ricorsivo(&mut self.root, pk);
     }
- 
+
     fn ricalcola_ricorsivo(
         node: &mut BranchNode,
         pk: &PublicKey,
-        mod_nodes: &mut Vec<ModifyNode>,
-        path: String,
     ) {
-      
         for i in 0..256 {
-            let percorso_figlio = format!("{}{:02x}", path, i);
- 
             match &mut node.children[i] {
-                
                 Some(NodeRef::Stem(stem_node)) => {
-                   
-                    let commit = stem_node.compute_commitment(pk);
-                    mod_nodes.push(ModifyNode {
-                        path: percorso_figlio,
-                        node_type: "stem".to_string(),
-                        commitment_bytes: commitment_to_value(commit),
-                    });
+                    stem_node.compute_commitment(pk);
                 }
-           
                 Some(NodeRef::Branch(branch)) => {
-                    // scendo ricorsivamente prima di calcolare il commitment di questo branch
-                    Self::ricalcola_ricorsivo(branch, pk, mod_nodes, percorso_figlio.clone());
-                    let commit = branch.compute_commitment(pk);
-                    mod_nodes.push(ModifyNode {
-                        path: percorso_figlio,
-                        node_type: "branch".to_string(),
-                        commitment_bytes: commitment_to_value(commit),
-                    });
+                    Self::ricalcola_ricorsivo(branch, pk);
+                    branch.compute_commitment(pk);
                 }
                 None => {}
             }
         }
- 
-       
-        let commit_root = node.compute_commitment(pk);
- 
-       
-        if path.is_empty() {
-            mod_nodes.push(ModifyNode {
-                path,
-                node_type: "root".to_string(),
-                commitment_bytes: commitment_to_value(commit_root),
-            });
-        }
+        node.compute_commitment(pk);
     }
 
     
@@ -587,6 +552,40 @@ impl VerkleTree {
         }
         true
     }
+
+
+
+        
+    #[cfg(test)]
+    pub fn get_all_commitments(&mut self) -> Vec<[u8; 48]> {
+        let mut commitments = Vec::new();
+        Self::collect_commitments(&mut self.root, &mut commitments);
+        commitments
+    }
+
+
+#[cfg(test)]
+fn collect_commitments(node: &BranchNode, commitments: &mut Vec<[u8; 48]>) {
+    for i in 0..256 {
+        match &node.children[i] {
+            Some(NodeRef::Stem(stem_node)) => {
+                if let Some(c) = stem_node.commitment {
+                    commitments.push(commitment_to_value(c));
+                }
+            }
+            Some(NodeRef::Branch(branch)) => {
+                Self::collect_commitments(branch, commitments);
+                if let Some(c) = branch.commitment {
+                    commitments.push(commitment_to_value(c));
+                }
+            }
+            None => {}
+        }
+    }
+    if let Some(c) = node.commitment {
+        commitments.push(commitment_to_value(c));
+    }
+}
 }
 
 
@@ -777,4 +776,50 @@ mod tests {
             assert!(valid, "prova non valida per blocco {}", i);
         }
     }
+
+
+
+    #[test]
+    fn test_ricalcola_tutto_uguale_a_insert_true() {
+    let pk = trusted_setup(255);
+    let mut tree1 = VerkleTree::new(pk.clone());
+    let mut tree2 = VerkleTree::new(pk);
+
+    // tree1: inserisce di volta in volta con true
+    for i in 0i64..5 {
+        let key = make_key(i);
+        let value = make_value(&format!("{:064x}", i));
+        tree1.insert(key, value, true);
+    }
+
+    // tree2: inserisce tutto con false poi ricalcola_tutto
+    for i in 0i64..5 {
+        let key = make_key(i);
+        let value = make_value(&format!("{:064x}", i));
+        tree2.insert(key, value, false);
+    }
+    tree2.ricalcola_tutto();
+
+    let commits1 = tree1.get_all_commitments();
+let commits2 = tree2.get_all_commitments();
+
+println!("commitment tree1 (insert true):");
+for c in &commits1 {
+    println!("  {}", hex::encode(c));
+}
+
+println!("commitment tree2 (ricalcola_tutto):");
+for c in &commits2 {
+    println!("  {}", hex::encode(c));
+}
+assert_eq!(commits1, commits2);
+
+    // le radici devono essere uguali
+    let root1 = tree1.get_root_commitment().unwrap();
+    let root2 = tree2.get_root_commitment().unwrap();
+    assert_eq!(root1.inner, root2.inner);
+}
+
+
+
 }
