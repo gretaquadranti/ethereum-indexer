@@ -559,22 +559,27 @@ impl VerkleTree {
     #[cfg(test)]
     pub fn get_all_commitments(&mut self) -> Vec<[u8; 48]> {
         let mut commitments = Vec::new();
-        Self::collect_commitments(&mut self.root, &mut commitments);
+        
+        Self::commitments_tot(&mut self.root, &mut commitments);
         commitments
     }
 
 
-#[cfg(test)]
-fn collect_commitments(node: &BranchNode, commitments: &mut Vec<[u8; 48]>) {
+    #[cfg(test)]
+    fn commitments_tot(node: &BranchNode, commitments: &mut Vec<[u8; 48]>) {
+    
     for i in 0..256 {
+
         match &node.children[i] {
+
             Some(NodeRef::Stem(stem_node)) => {
+
                 if let Some(c) = stem_node.commitment {
                     commitments.push(commitment_to_value(c));
                 }
             }
             Some(NodeRef::Branch(branch)) => {
-                Self::collect_commitments(branch, commitments);
+                Self::commitments_tot(branch, commitments);
                 if let Some(c) = branch.commitment {
                     commitments.push(commitment_to_value(c));
                 }
@@ -772,7 +777,6 @@ mod tests {
             let key = make_key(i);
             let proof = tree.prove(&key).expect(&format!("prova per blocco {} non trovata", i));
             let valid = VerkleTree::verify_proof(&proof, tree.getter_pk(), root, key);
-            //se i test non passassero, allora assert si blocca e stampa "prova non valida per blocco "
             assert!(valid, "prova non valida per blocco {}", i);
         }
     }
@@ -785,14 +789,14 @@ mod tests {
     let mut tree1 = VerkleTree::new(pk.clone());
     let mut tree2 = VerkleTree::new(pk);
 
-    // tree1: inserisce di volta in volta con true
+    // tree1: inserisco con true -> ricalcolo ogni volta
     for i in 0i64..5 {
         let key = make_key(i);
         let value = make_value(&format!("{:064x}", i));
         tree1.insert(key, value, true);
     }
 
-    // tree2: inserisce tutto con false poi ricalcola_tutto
+    // tree2: inserisco e calcolo alla fine 
     for i in 0i64..5 {
         let key = make_key(i);
         let value = make_value(&format!("{:064x}", i));
@@ -801,23 +805,24 @@ mod tests {
     tree2.ricalcola_tutto();
 
     let commits1 = tree1.get_all_commitments();
-let commits2 = tree2.get_all_commitments();
+    let commits2 = tree2.get_all_commitments();
 
-println!("commitment tree1 (insert true):");
-for c in &commits1 {
-    println!("  {}", hex::encode(c));
-}
+    println!("commitment tree1 (insert true):");
+    for c in &commits1 {
+        println!("  {}", hex::encode(c));
+    }
 
-println!("commitment tree2 (ricalcola_tutto):");
-for c in &commits2 {
-    println!("  {}", hex::encode(c));
-}
-assert_eq!(commits1, commits2);
+    println!("commitment tree2 (ricalcola_tutto):");
+    for c in &commits2 {
+        println!("  {}", hex::encode(c));
+    }
+    assert_eq!(commits1, commits2);
 
-    // le radici devono essere uguali
+    
     let root1 = tree1.get_root_commitment().unwrap();
     let root2 = tree2.get_root_commitment().unwrap();
     assert_eq!(root1.inner, root2.inner);
+
 }
 
 
